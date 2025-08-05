@@ -1,6 +1,7 @@
 // src/pages/EditorPage.jsx
 import { useParams } from 'react-router-dom';
 import Editor from '@monaco-editor/react'; // 1. Import the Editor
+import { useEffect } from 'react';
 
 function EditorPage() {
   const { roomId } = useParams();
