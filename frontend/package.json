@@ -15,7 +15,9 @@
     "react-dom": "^19.1.0",
     "react-router-dom": "^7.7.1",
     "socket.io-client": "^4.8.1",
-    "uuid": "^11.1.0"
+    "uuid": "^11.1.0",
+    "y-monaco": "^0.1.6",
+    "yjs": "^13.6.27"
   },
   "devDependencies": {
     "@eslint/js": "^9.30.1",
