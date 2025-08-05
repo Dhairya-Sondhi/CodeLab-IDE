@@ -41,4 +41,76 @@ const loadDocFromDB = async (roomId) => {
     return data ? new Uint8Array(Buffer.from(data.content, 'base64')) : null;
 };
 
-const saveDocToDB = async (roomId
+const saveDocToDB = async (roomId, ydoc) => {
+    // CORRECTED: Encode the document state into a base64 string for safe storage
+    const content = Buffer.from(Y.encodeStateAsUpdate(ydoc)).toString('base64');
+    const { error } = await supabase
+        .from('rooms')
+        .upsert({ id: roomId, content: content }, { onConflict: 'id' });
+    if (error) {
+        console.error('Error saving doc:', error);
+    } else {
+        console.log(`Successfully saved doc for room: ${roomId}`);
+    }
+};
+// --- END DATABASE HELPER FUNCTIONS ---
+
+
+io.on('connection', (socket) => {
+    console.log(`User connected: ${socket.id}`);
+
+    const connectedRooms = new Set();
+
+    socket.on('join-room', async (roomId) => {
+        socket.join(roomId);
+        connectedRooms.add(roomId);
+        console.log(`User ${socket.id} joined room ${roomId}`);
+
+        let doc = roomDocs.get(roomId);
+
+        if (!doc) {
+            doc = new Y.Doc();
+            roomDocs.set(roomId, doc);
+            
+            const dbContent = await loadDocFromDB(roomId);
+            if (dbContent) {
+                Y.applyUpdate(doc, dbContent);
+                console.log(`Loaded document for room ${roomId} from database.`);
+            } else {
+                doc.getMap('metadata').set('language', 'javascript');
+            }
+        }
+        
+        const docState = Y.encodeStateAsUpdate(doc);
+        socket.emit('doc-sync', docState);
+    });
+
+    socket.on('doc-update', ({ roomId, update }) => {
+        const updateBuffer = new Uint8Array(update);
+        const doc = roomDocs.get(roomId);
+        if (doc) {
+            Y.applyUpdate(doc, updateBuffer);
+            socket.to(roomId).emit('doc-update', updateBuffer);
+        }
+    });
+
+    socket.on('disconnect', async () => {
+        console.log(`User disconnected: ${socket.id}`);
+        for (const roomId of connectedRooms) {
+            const room = io.sockets.adapter.rooms.get(roomId);
+            if (!room || room.size === 0) {
+                const docToSave = roomDocs.get(roomId);
+                if (docToSave) {
+                    await saveDocToDB(roomId, docToSave);
+                    roomDocs.delete(roomId);
+                    console.log(`Room ${roomId} is now empty. Saving to DB and clearing from memory.`);
+                }
+            }
+        }
+    });
+});
+
+const PORT = process.env.PORT || 3001; 
+server.listen(PORT, () => {
+    console.log(`Backend server listening on port ${PORT}`);
+});
