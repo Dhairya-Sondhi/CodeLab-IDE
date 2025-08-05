@@ -12,8 +12,8 @@ const server = http.createServer(app);
 // IMPORTANT: Configure CORS for Socket.IO
 const io = new Server(server, {
     cors: {
-        // Replace this with your Vercel frontend URL when you have it
-        origin: "*", // For local testing, "*" is okay. For production, be more specific.
+        // BE SURE to replace this with your actual Vercel URL!
+        origin: "https://codelab-lyart.vercel.app/", 
         methods: ["GET", "POST"]
     }
 });
