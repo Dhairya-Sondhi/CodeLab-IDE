@@ -1,0 +1,77 @@
+/* src/styles/cursors.css */
+
+.remote-cursor {
+  position: relative !important;
+  pointer-events: none;
+}
+
+.remote-selection {
+  position: relative !important;
+  pointer-events: none;
+}
+
+.cursor-label {
+  position: relative;
+  pointer-events: none;
+}
+
+.cursor-name {
+  position: absolute;
+  top: -22px;
+  left: 0;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  pointer-events: none;
+  z-index: 1001;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
+@keyframes blink-cursor {
+  0%, 50% { 
+    opacity: 1; 
+  }
+  51%, 100% { 
+    opacity: 0.3; 
+  }
+}
+
+/* Ensure cursors are visible over Monaco content */
+.monaco-editor .view-lines .view-line .remote-cursor {
+  z-index: 1000 !important;
+  position: relative;
+}
+
+.monaco-editor .view-lines .view-line .remote-selection {
+  z-index: 999 !important;
+  position: relative;
+}
+
+.monaco-editor .margin {
+  z-index: 5;
+}
+
+.monaco-editor .cursors-layer {
+  z-index: 1005;
+}
+
+/* Override Monaco's default selection styling for remote selections */
+.monaco-editor .view-lines .view-line span.remote-selection {
+  border-radius: 2px;
+}
+
+/* Ensure cursor names don't interfere with editor functionality */
+.cursor-name {
+  -ms-user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  user-select: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .cursor-name {
+    font-size: 9px;
+    padding: 1px 4px;
+  }
+}
