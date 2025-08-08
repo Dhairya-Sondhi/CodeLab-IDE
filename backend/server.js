@@ -26,10 +26,7 @@ const server = http.createServer(app);
 
 // --- FIXED CORS CONFIGURATION ---
 const corsOptions = {
-    origin: [
-        "http://localhost:5173",           // Local development
-        "http://127.0.0.1:5173",          // Alternative local
-        "https://codelab-lyart.vercel.app", // Old URL (compatibility)
+    origin: [         // Alternative local // Old URL (compatibility)
         "https://code-lab-ide.vercel.app"   // NEW: Your actual Vercel URL
     ],
     methods: ["GET", "POST"],
