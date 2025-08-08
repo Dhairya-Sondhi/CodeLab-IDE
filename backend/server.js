@@ -17,26 +17,27 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
     console.error("ERROR: Supabase URL or Anon Key is missing. Make sure to set them in your Render environment variables.");
     process.exit(1);
-} // Fixed: Added missing closing brace
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 // --- END SUPABASE SETUP ---
 
 const server = http.createServer(app);
 
-// --- FIXED CORS CONFIGURATION ---
+// --- UPDATED CORS CONFIGURATION ---
 const corsOptions = {
     origin: [
         "http://localhost:5173",           // Local development
         "http://127.0.0.1:5173",          // Alternative local
-        process.env.FRONTEND_URL || "https://code-lab-ide.vercel.app" // Production frontend
+        "https://codelab-lyart.vercel.app", // Old URL (compatibility)
+        "https://code-lab-ide.vercel.app"   // NEW: Your actual Vercel URL
     ],
     methods: ["GET", "POST"],
     credentials: true
 };
 
 app.use(cors(corsOptions));
-app.use(express.json()); // Express JSON parser
+app.use(express.json());
 
 const io = new Server(server, {
     cors: corsOptions
@@ -45,8 +46,8 @@ const io = new Server(server, {
 
 // In-memory storage for active room documents
 const roomDocs = new Map();
-const roomStates = new Map(); // For input/output
-const roomUsers = new Map(); // Track users in each room
+const roomStates = new Map();
+const roomUsers = new Map();
 
 // --- DATABASE HELPER FUNCTIONS ---
 const loadDocFromDB = async (roomId) => {
@@ -99,13 +100,21 @@ const saveInputOutputToDB = async (roomId, input, output) => {
 // --- END DATABASE HELPER FUNCTIONS ---
 
 // --- API ROUTES ---
-// Fixed: Added the missing /api/execute route
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ 
+        status: 'Backend is running!', 
+        timestamp: new Date().toISOString(),
+        cors: corsOptions.origin
+    });
+});
+
+// Updated /api/execute route
 app.post('/api/execute', async (req, res) => {
     console.log("Received request for /api/execute");
     const { code, language, input } = req.body;
 
     try {
-        // Mock execution for development
         let output = '';
         
         switch (language) {
@@ -114,7 +123,22 @@ app.post('/api/execute', async (req, res) => {
                 if (jsMatches) {
                     output = jsMatches.map(match => {
                         const content = match.match(/console\.log\(([^)]+)\)/)[1];
-                        return content.replace(/['"]/g, '');
+                        try {
+                            // Handle simple expressions
+                            if (content.match(/^['"`][^'"`]*['"`]$/)) {
+                                return content.slice(1, -1);
+                            } else if (content.match(/^\d+$/)) {
+                                return content;
+                            } else if (content.includes('+')) {
+                                const parts = content.split('+').map(p => p.trim());
+                                if (parts.every(p => p.match(/^\d+$/) || p.match(/^['"`][^'"`]*['"`]$/))) {
+                                    return parts.map(p => p.match(/^\d+$/) ? parseInt(p) : p.slice(1, -1)).join('');
+                                }
+                            }
+                            return content.replace(/['"]/g, '');
+                        } catch {
+                            return content.replace(/['"]/g, '');
+                        }
                     }).join('\n');
                 } else {
                     output = 'JavaScript code executed successfully';
@@ -133,13 +157,49 @@ app.post('/api/execute', async (req, res) => {
                 }
                 break;
                 
+            case 'java':
+                const javaMatches = code.match(/System\.out\.println?\([^)]*\)/g);
+                if (javaMatches) {
+                    output = javaMatches.map(match => {
+                        const content = match.match(/System\.out\.println?\(([^)]+)\)/)[1];
+                        return content.replace(/['"]/g, '');
+                    }).join('\n');
+                } else {
+                    output = 'Java code compiled and executed successfully';
+                }
+                break;
+                
+            case 'cpp':
+                const cppMatches = code.match(/cout\s*<<[^;]+/g);
+                if (cppMatches) {
+                    output = cppMatches.map(match => {
+                        let content = match.replace(/cout\s*<<\s*/, '').replace(/\s*<<\s*endl/g, '');
+                        return content.replace(/['"]/g, '');
+                    }).join('\n');
+                } else {
+                    output = 'C++ code compiled and executed successfully';
+                }
+                break;
+                
+            case 'c':
+                const cMatches = code.match(/printf\([^)]*\)/g);
+                if (cMatches) {
+                    output = cMatches.map(match => {
+                        const content = match.match(/printf\(([^)]+)\)/)[1];
+                        return content.replace(/['"]/g, '').replace(/\\n/g, '\n');
+                    }).join('');
+                } else {
+                    output = 'C code compiled and executed successfully';
+                }
+                break;
+                
             default:
                 output = `${language} code executed successfully`;
         }
 
         res.json({
             output: output || 'No output',
-            status: 'Completed',
+            status: 'Completed (Mock Execution)',
             time: '0.001',
             memory: '1024'
         });
@@ -153,7 +213,7 @@ app.post('/api/execute', async (req, res) => {
     }
 });
 
-// Keep your existing /execute endpoint for Python
+// Keep existing /execute endpoint for Python
 app.post('/execute', async (req, res) => {
     console.log("Received request for /execute");
     const { code, language, input } = req.body;
@@ -384,4 +444,5 @@ io.on('connection', (socket) => {
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
     console.log(`Backend server listening on port ${PORT}`);
+    console.log(`CORS enabled for origins:`, corsOptions.origin);
 });
