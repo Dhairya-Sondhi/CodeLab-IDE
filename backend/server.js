@@ -5,9 +5,15 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const Y = require('yjs');
 const { createClient } = require('@supabase/supabase-js');
-require('dotenv').config();
 
-// --- 1. INITIALIZE EXPRESS APP FIRST ---
+// Initialize dotenv only if .env file exists
+try {
+    require('dotenv').config();
+} catch (error) {
+    console.log('No .env file found, using environment variables');
+}
+
+// --- INITIALIZE EXPRESS APP ---
 const app = express();
 
 // --- SUPABASE SETUP ---
@@ -15,7 +21,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL || 'https://zwkulpxvixgtgopumgjc.s
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inp3a3VscHh2aXhndGdvcHVtZ2pjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ0MDcxOTUsImV4cCI6MjA2OTk4MzE5NX0.j2uEXTFkG6MZcAkzUDjgcnB14sfkkmVVsJaiJ8hqqwM';
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    console.error("ERROR: Supabase URL or Anon Key is missing. Make sure to set them in your environment variables.");
+    console.error("ERROR: Supabase URL or Anon Key is missing.");
     process.exit(1);
 }
 
@@ -25,9 +31,8 @@ console.log('✅ Supabase client initialized');
 // --- CREATE HTTP SERVER ---
 const server = http.createServer(app);
 
-// --- CSP AND SECURITY HEADERS ---
+// --- SECURITY HEADERS MIDDLEWARE ---
 app.use((req, res, next) => {
-    // Set appropriate CSP headers to avoid CSP violations
     res.setHeader('Content-Security-Policy', 
         "default-src 'self'; " +
         "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
@@ -36,11 +41,9 @@ app.use((req, res, next) => {
         "connect-src 'self' ws: wss: https:; " +
         "font-src 'self' https:; " +
         "object-src 'none'; " +
-        "media-src 'self'; " +
-        "frame-src 'none';"
+        "media-src 'self';"
     );
     
-    // Additional security headers
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('X-XSS-Protection', '1; mode=block');
@@ -51,10 +54,10 @@ app.use((req, res, next) => {
 // --- CORS CONFIGURATION ---
 const corsOptions = {
     origin: [
-        "http://localhost:5173",           // Local development
-        "http://127.0.0.1:5173",          // Alternative local
-        "https://codelab-lyart.vercel.app", // Old URL (compatibility)
-        "https://code-lab-ide.vercel.app"   // NEW: Your actual Vercel URL
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://codelab-lyart.vercel.app",
+        "https://code-lab-ide.vercel.app"
     ],
     methods: ["GET", "POST", "OPTIONS"],
     credentials: true,
@@ -62,6 +65,7 @@ const corsOptions = {
     optionsSuccessStatus: 200
 };
 
+// Apply CORS and body parsing middleware
 app.use(cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
@@ -150,7 +154,7 @@ const saveInputOutputToDB = async (roomId, input, output) => {
     }
 };
 
-// --- API ENDPOINTS ---
+// --- CLEAN API ROUTES (Fixed path-to-regexp issues) ---
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -163,7 +167,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Test endpoint for connectivity
+// Test endpoint
 app.get('/test', (req, res) => {
     res.status(200).json({
         message: 'Backend is accessible',
@@ -283,52 +287,47 @@ app.post('/api/execute', async (req, res) => {
     }
 });
 
-// Lambda-based execution endpoint (for production)
+// Lambda-based execution endpoint
 app.post('/execute', async (req, res) => {
     console.log("🚀 Received request for /execute (Lambda)");
     const { code, language, input } = req.body;
 
-    // Lambda executor endpoints
     const executors = {
         python: process.env.PYTHON_EXECUTOR_URL || 'https://xw5e5ma8xb.execute-api.ap-south-1.amazonaws.com/default/code-executor-python',
-        javascript: process.env.JS_EXECUTOR_URL || 'https://n9ztmszd58.execute-api.ap-south-1.amazonaws.com/default/code-executor-javascript',
-        cpp: process.env.CPP_EXECUTOR_URL || 'https://fntyxwq1p3.execute-api.ap-south-1.amazonaws.com/default/code-executor-cpp'
+        javascript: process.env.JS_EXECUTOR_URL,
+        cpp: process.env.CPP_EXECUTOR_URL
     };
 
     const lambdaEndpoint = executors[language?.toLowerCase()];
 
     if (!lambdaEndpoint) {
-        return res.status(400).json({
-            error: `Language '${language}' is not supported for Lambda execution. Supported: ${Object.keys(executors).join(', ')}`
-        });
+        console.log(`Language ${language} not supported for Lambda execution, falling back to mock`);
+        // Fallback to mock execution
+        req.body.language = language;
+        return app._router.handle({ ...req, url: '/api/execute', method: 'POST' }, res);
     }
 
     try {
-        console.log(`🔄 Executing ${language} code via Lambda: ${lambdaEndpoint}`);
+        console.log(`🔄 Executing ${language} code via Lambda`);
         
         const response = await fetch(lambdaEndpoint, {
             method: 'POST',
             headers: { 
-                'Content-Type': 'application/json',
-                'User-Agent': 'CodeLab-IDE/1.0'
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 code: code,
                 input: input || ''
-            }),
-            timeout: 30000 // 30 second timeout
+            })
         });
 
         if (!response.ok) {
-            const errorBody = await response.text();
-            console.error(`❌ Lambda execution failed: ${response.status} - ${errorBody}`);
             throw new Error(`Lambda responded with status: ${response.status}`);
         }
 
         const result = await response.json();
         console.log("✅ Lambda execution completed");
 
-        // Parse nested response if needed
         let finalResult;
         if (result.body && typeof result.body === 'string') {
             try {
@@ -346,8 +345,7 @@ app.post('/execute', async (req, res) => {
         console.error('❌ Lambda execution error:', error);
         res.status(500).json({
             error: 'Failed to execute code via Lambda.',
-            details: error.message,
-            fallback: 'Consider using mock execution instead'
+            details: error.message
         });
     }
 });
@@ -561,18 +559,23 @@ app.use((err, req, res, next) => {
     });
 });
 
+// 404 handler for undefined routes
+app.use((req, res) => {
+    res.status(404).json({
+        error: 'Route not found',
+        path: req.path,
+        method: req.method
+    });
+});
+
 // --- START SERVER ---
 const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, () => {
     console.log(`🚀 CodeLab IDE Backend server running on port ${PORT}`);
     console.log(`📡 CORS enabled for origins:`, corsOptions.origin);
-    console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+    console.log(`🔗 Health check available at /health`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    
-    if (process.env.NODE_ENV === 'production') {
-        console.log(`🌐 Production URL: https://codelab-backend-q5m7.onrender.com`);
-    }
 });
 
 // Graceful shutdown
