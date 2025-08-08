@@ -26,7 +26,7 @@ const server = http.createServer(app);
 
 // --- CORS CONFIGURATION ---
 const corsOptions = {
-    origin: "https://codelab-lyart.vercel.app", // Or your latest Vercel URL
+    origin: "https://code-lab-ide.vercel.app/", // Or your latest Vercel URL
     methods: ["GET", "POST"],
     credentials: true
 };
