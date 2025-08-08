@@ -29,7 +29,7 @@ const corsOptions = {
     origin: [
         "http://localhost:5173",           // Local development
         "http://127.0.0.1:5173",          // Alternative local
-        "https://code-lab-ide.vercel.app" // Production frontend
+        process.env.FRONTEND_URL || "https://code-lab-ide.vercel.app" // Production frontend
     ],
     methods: ["GET", "POST"],
     credentials: true
