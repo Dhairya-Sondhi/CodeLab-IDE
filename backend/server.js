@@ -148,6 +148,21 @@ const saveInputOutputToDB = async (roomId, input, output) => {
 // --- API ENDPOINTS ---
 
 // Health check endpoint
+app.get('/', (req, res) => {
+    res.json({
+        message: 'CodeLab IDE Backend API',
+        status: 'running',
+        version: '1.0.0',
+        endpoints: {
+            health: '/health',
+            execute: '/api/execute',
+            lambdaExecute: '/execute',
+            socketio: '/socket.io/'
+        },
+        documentation: 'Visit /health for server status'
+    });
+});
+
 app.get('/health', (req, res) => {
     res.status(200).json({ 
         status: 'Backend is running!', 
