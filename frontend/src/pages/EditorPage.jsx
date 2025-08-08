@@ -4,403 +4,699 @@ import { useParams, useNavigate } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 import { io } from 'socket.io-client';
 import * as Y from 'yjs';
+import * as monaco from 'monaco-editor';
+
 import { MonacoBinding } from 'y-monaco';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/ui/Button';
-import CursorManager from '../components/editor/CursorManager'; // NEW IMPORT
+import CursorManager from '../components/editor/CursorManager';
 import '../styles/editor.css';
 
 function EditorPage() {
-  const { roomId } = useParams();
-  const navigate = useNavigate();
-  const { user, signOut } = useAuth();
+    const { roomId } = useParams();
+    const navigate = useNavigate();
+    const { user, signOut, loading: authLoading } = useAuth();
 
-  // Refs and State Hooks
-  const monacoRef = useRef(null);
-  const [editor, setEditor] = useState(null);
-  const [socket, setSocket] = useState(null); // NEW STATE
-  const [yDoc, setYDoc] = useState(null);
-  const [binding, setBinding] = useState(null);
-  const [currentLanguage, setCurrentLanguage] = useState('javascript');
-  const [connectedUsers, setConnectedUsers] = useState([]);
-  const [isConnected, setIsConnected] = useState(false);
-  const [output, setOutput] = useState('');
-  const [isExecuting, setIsExecuting] = useState(false);
-  const [executionTime, setExecutionTime] = useState(null);
-  const [executionMemory, setExecutionMemory] = useState(null);
+    const monacoRef = useRef(null);
+    const socketRef = useRef(null);
+    const [editor, setEditor] = useState(null);
+    const [yDoc, setYDoc] = useState(null);
+    const [binding, setBinding] = useState(null);
+    const [currentLanguage, setCurrentLanguage] = useState('javascript');
+    const [connectedUsers, setConnectedUsers] = useState([]);
+    const [currentUser, setCurrentUser] = useState(null);
+    const [isConnected, setIsConnected] = useState(false);
+    const [output, setOutput] = useState('');
+    const [isExecuting, setIsExecuting] = useState(false);
+    const [userInput, setUserInput] = useState('');
 
-  // API Base URL - switches between local development and production
-  const API_BASE_URL = window.location.hostname === 'localhost' 
-    ? 'http://localhost:3001'
-    : 'https://codelab-backend-q5m7.onrender.com';
+    const handleCopyRoomId = () => {
+        navigator.clipboard.writeText(roomId);
+        alert(`Room ID "${roomId}" copied to clipboard!`);
+    };
 
-  // --- UI Handlers ---
-  const handleCopyRoomId = () => {
-    navigator.clipboard.writeText(roomId);
-    alert(`Room ID "${roomId}" copied to clipboard!`);
-  };
+    const handleLeaveRoom = () => navigate('/');
+    const handleSignOut = async () => {
+        await signOut();
+        navigate('/login');
+    };
 
-  const handleLeaveRoom = () => {
-    navigate('/');
-  };
+    const handleLanguageChange = (e) => {
+        const newLanguage = e.target.value;
+        setCurrentLanguage(newLanguage); 
+        if (yDoc) {
+            yDoc.getMap('metadata').set('language', newLanguage);
+        }
+    };
 
-  const handleSignOut = async () => {
-    await signOut();
-    navigate('/login');
-  };
+    // Handle input changes with sync
+    const handleInputChange = (value) => {
+        setUserInput(value);
+        if (socketRef.current && roomId) {
+            socketRef.current.emit('input-update', { roomId, input: value });
+        }
+    };
 
-  const handleLanguageChange = (e) => {
-    const newLanguage = e.target.value;
-    setCurrentLanguage(newLanguage);
-    if (socket && yDoc) {
-      yDoc.getMap('metadata').set('language', newLanguage);
-      // Emit language change to other users
-      socket.emit('language-change', { roomId, language: newLanguage });
-    }
-  };
-
-  // Code Execution Handler
-  const handleRunCode = async () => {
-    if (!editor) {
-      setOutput("❌ Editor not ready. Please wait and try again.");
-      return;
-    }
-    
-    setIsExecuting(true);
-    setOutput("🔄 Executing code...");
-    setExecutionTime(null);
-    setExecutionMemory(null);
-    
-    const code = editor.getValue();
-    
-    if (!code.trim()) {
-      setOutput("❌ No code to execute. Please write some code first.");
-      setIsExecuting(false);
-      return;
-    }
-    
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/execute`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          code: code,
-          language: currentLanguage
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (response.ok) {
-        let formattedOutput = '';
+    // Handle run code with sync
+    const handleRunCode = async () => {
+        if (!editor) return;
         
-        if (result.output) {
-          formattedOutput += `📤 Output:\n${result.output}`;
-        } else {
-          formattedOutput += '📤 Output:\n(No output)';
+        setIsExecuting(true);
+        setOutput('Executing code...');
+        
+        // Notify other users that code is executing
+        if (socketRef.current && roomId) {
+            socketRef.current.emit('code-execution', { roomId, isExecuting: true });
+            socketRef.current.emit('output-update', { roomId, output: 'Executing code...' });
         }
         
-        if (result.status) {
-          formattedOutput += `\n\n📊 Status: ${result.status}`;
-        }
+        const code = editor.getValue();
         
-        if (result.time) {
-          formattedOutput += `\n⏱️ Execution Time: ${result.time}s`;
-          setExecutionTime(result.time);
-        }
-        
-        if (result.memory) {
-          formattedOutput += `\n💾 Memory Used: ${result.memory} KB`;
-          setExecutionMemory(result.memory);
-        }
-        
-        setOutput(formattedOutput);
-      } else {
-        setOutput(`❌ Error: ${result.error || 'Unknown error occurred'}`);
-      }
-    } catch (error) {
-      console.error("Network error:", error);
-      setOutput(`❌ Connection Error: ${error.message}\n\n💡 Make sure your backend server is running on port 3001`);
-    } finally {
-      setIsExecuting(false);
-    }
-  };
+        try {
+          const response = await fetch('https://codelab-backend-q5m7.onrender.com/execute', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              code,
+              language: currentLanguage,
+              input: userInput
+            })
+          });
+          
+          const result = await response.json();
+          const outputResult = result.output || result.error || 'Execution finished with no output.';
+          
+          setOutput(outputResult);
+          
+          // Sync output to other users
+          if (socketRef.current && roomId) {
+            socketRef.current.emit('output-update', { roomId, output: outputResult });
+          }
 
-  const handleClearOutput = () => {
-    setOutput('');
-    setExecutionTime(null);
-    setExecutionMemory(null);
-  };
+        } catch (error) {
+          const errorMessage = `Network or server error: ${error.message}`;
+          setOutput(errorMessage);
+          
+          // Sync error to other users
+          if (socketRef.current && roomId) {
+            socketRef.current.emit('output-update', { roomId, output: errorMessage });
+          }
+        } finally {
+          setIsExecuting(false);
+          
+          // Notify other users that execution finished
+          if (socketRef.current && roomId) {
+            socketRef.current.emit('code-execution', { roomId, isExecuting: false });
+          }
+        }
+    };
 
-  const handleEditorDidMount = (editorInstance, monacoInstance) => {
+   const handleEditorDidMount = (editorInstance, monacoInstance) => {
     setEditor(editorInstance);
     monacoRef.current = monacoInstance;
-  };
+    
+    // ENHANCED: Python IntelliSense (keeping your existing implementation)
+    const pythonKeywords = [
+        'def', 'class', 'if', 'elif', 'else', 'try', 'except', 'finally',
+        'for', 'while', 'with', 'import', 'from', 'return', 'yield',
+        'lambda', 'and', 'or', 'not', 'in', 'is', 'None', 'True', 'False',
+        'self', 'super', '__init__', '__str__', '__repr__', 'async', 'await',
+        'global', 'nonlocal', 'pass', 'break', 'continue', 'assert', 'del'
+    ];
 
-  // --- Main Connection and Syncing Logic ---
-  useEffect(() => {
-    const SOCKET_URL = API_BASE_URL;
-    const socketInstance = io(SOCKET_URL);
-    setSocket(socketInstance); // Store socket in state
-    const doc = new Y.Doc();
-    setYDoc(doc);
+    const pythonBuiltins = [
+        'print', 'input', 'len', 'str', 'int', 'float', 'list', 'dict',
+        'tuple', 'set', 'range', 'enumerate', 'zip', 'map', 'filter',
+        'sum', 'max', 'min', 'abs', 'round', 'sorted', 'reversed',
+        'open', 'type', 'isinstance', 'hasattr', 'getattr', 'setattr',
+        'all', 'any', 'bin', 'hex', 'oct', 'chr', 'ord', 'pow'
+    ];
 
-    const yMetadata = doc.getMap('metadata');
-    yMetadata.observe(event => {
-      const newLang = yMetadata.get('language');
-      if (newLang && monacoRef.current && editor && newLang !== currentLanguage) {
-        setCurrentLanguage(newLang);
-        monacoRef.current.editor.setModelLanguage(editor.getModel(), newLang);
-      }
-    });
-
-    socketInstance.on('connect', () => {
-      console.log('Connected to backend server');
-      setIsConnected(true);
-      socketInstance.emit('join-room', { 
-        roomId, 
-        user: {
-          id: user?.id,
-          name: user?.user_metadata?.username || user?.email || 'Anonymous'
-        }
-      });
-    });
-
-    socketInstance.on('disconnect', () => {
-      setIsConnected(false);
-    });
-
-    socketInstance.on('user-joined', (userData) => {
-      setConnectedUsers(prev => {
-        const filtered = prev.filter(u => u.id !== userData.id);
-        return [...filtered, userData];
-      });
-    });
-
-    socketInstance.on('user-left', (userId) => {
-      setConnectedUsers(prev => prev.filter(u => u.id !== userId));
-    });
-
-    socketInstance.on('room-users', (users) => {
-      setConnectedUsers(users);
-    });
-
-    socketInstance.on('doc-sync', (docState) => {
-      Y.applyUpdate(doc, new Uint8Array(docState));
-    });
-
-    socketInstance.on('doc-update', (update) => {
-      Y.applyUpdate(doc, new Uint8Array(update));
-    });
-
-    socketInstance.on('language-changed', (language) => {
-      setCurrentLanguage(language);
-      if (monacoRef.current && editor) {
-        monacoRef.current.editor.setModelLanguage(editor.getModel(), language);
-      }
-    });
-
-    doc.on('update', (update) => {
-      socketInstance.emit('doc-update', { roomId, update });
-    });
-
-    return () => {
-      socketInstance.disconnect();
-      doc.destroy();
-      setSocket(null);
+    const pythonMethods = {
+        'str': ['upper', 'lower', 'strip', 'split', 'join', 'replace', 'find', 'startswith', 'endswith', 'isdigit', 'isalpha', 'isalnum', 'count', 'index'],
+        'list': ['append', 'extend', 'insert', 'remove', 'pop', 'index', 'count', 'sort', 'reverse', 'clear', 'copy'],
+        'dict': ['get', 'keys', 'values', 'items', 'pop', 'popitem', 'clear', 'update', 'copy', 'setdefault']
     };
-  }, [roomId, user, API_BASE_URL]);
 
-  // Effect to create the Monaco Binding once editor and yDoc are ready
-  useEffect(() => {
-    if (editor && yDoc) {
-      const monacoBinding = new MonacoBinding(
-        yDoc.getText('monaco'),
-        editor.getModel(),
-        new Set([editor])
-      );
-      setBinding(monacoBinding);
+    // Python completion provider with enhanced features
+    monacoInstance.languages.registerCompletionItemProvider('python', {
+        provideCompletionItems: (model, position) => {
+            const word = model.getWordUntilPosition(position);
+            const range = {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: word.startColumn,
+                endColumn: word.endColumn
+            };
 
-      return () => {
-        monacoBinding.destroy();
-      };
+            const line = model.getLineContent(position.lineNumber);
+            const textUntilPosition = model.getValueInRange({
+                startLineNumber: position.lineNumber,
+                startColumn: 1,
+                endLineNumber: position.lineNumber,
+                endColumn: position.column
+            });
+
+            let suggestions = [];
+
+            // Check for method calls (e.g., "string_var.")
+            const methodMatch = textUntilPosition.match(/(\w+)\.$/);
+            if (methodMatch) {
+                const varName = methodMatch[1];
+                let methods = [];
+                
+                // Enhanced type inference
+                if (line.includes(`${varName} = "`) || line.includes(`${varName} = '`) || textUntilPosition.includes('str(')) {
+                    methods = pythonMethods.str;
+                } else if (line.includes(`${varName} = [`) || textUntilPosition.includes('list(')) {
+                    methods = pythonMethods.list;
+                } else if (line.includes(`${varName} = {`) || textUntilPosition.includes('dict(')) {
+                    methods = pythonMethods.dict;
+                } else {
+                    // Generic methods for unknown types
+                    methods = [...pythonMethods.str, ...pythonMethods.list, ...pythonMethods.dict];
+                }
+
+                suggestions = methods.map(method => ({
+                    label: method,
+                    kind: monacoInstance.languages.CompletionItemKind.Method,
+                    insertText: method,
+                    range: range,
+                    detail: `${method}() method`
+                }));
+            } 
+            // Special handling for class definitions
+            else if (textUntilPosition.trim().startsWith('def ') && 
+                     position.lineNumber > 1 && 
+                     model.getLineContent(position.lineNumber - 1).includes('class ')) {
+                suggestions.push({
+                    label: '__init__',
+                    kind: monacoInstance.languages.CompletionItemKind.Constructor,
+                    insertText: '__init__(self):',
+                    range: range,
+                    detail: 'Constructor method'
+                });
+            }
+            else {
+                // Regular keyword and builtin suggestions
+                const allSuggestions = [
+                    ...pythonKeywords.map(keyword => ({
+                        label: keyword,
+                        kind: monacoInstance.languages.CompletionItemKind.Keyword,
+                        insertText: keyword,
+                        range: range,
+                        detail: 'Python keyword'
+                    })),
+                    ...pythonBuiltins.map(builtin => ({
+                        label: builtin,
+                        kind: monacoInstance.languages.CompletionItemKind.Function,
+                        insertText: builtin,
+                        range: range,
+                        detail: 'Built-in function'
+                    }))
+                ];
+
+                // Filter suggestions based on what user is typing
+                const currentWord = word.word.toLowerCase();
+                suggestions = allSuggestions.filter(suggestion => 
+                    suggestion.label.toLowerCase().startsWith(currentWord)
+                );
+            }
+
+            return { suggestions };
+        },
+        triggerCharacters: ['.']
+    });
+
+    // ENHANCED C++ IntelliSense with additional support
+    const cppKeywords = [
+        'auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do',
+        'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if',
+        'int', 'long', 'register', 'return', 'short', 'signed', 'sizeof', 'static',
+        'struct', 'switch', 'typedef', 'union', 'unsigned', 'void', 'volatile', 'while',
+        'class', 'private', 'protected', 'public', 'friend', 'inline', 'template',
+        'virtual', 'bool', 'true', 'false', 'namespace', 'using', 'try', 'catch',
+        'throw', 'new', 'delete', 'this', 'operator', 'const_cast', 'dynamic_cast',
+        'reinterpret_cast', 'static_cast', 'nullptr', 'constexpr', 'decltype',
+        'override', 'final', 'noexcept', 'thread_local', 'alignas', 'alignof'
+    ];
+
+    const cppStdLibrary = [
+        'cout', 'cin', 'endl', 'string', 'vector', 'map', 'set', 'list',
+        'queue', 'stack', 'priority_queue', 'pair', 'make_pair',
+        'sort', 'find', 'max', 'min', 'swap', 'reverse', 'unique',
+        'lower_bound', 'upper_bound', 'binary_search', 'next_permutation',
+        'prev_permutation', 'accumulate', 'count', 'count_if', 'find_if',
+        'transform', 'copy', 'move', 'fill', 'generate', 'replace',
+        'remove', 'remove_if', 'distance', 'advance', 'back_inserter'
+    ];
+
+    const cppHeaders = [
+        '#include <iostream>', '#include <vector>', '#include <string>',
+        '#include <algorithm>', '#include <map>', '#include <set>',
+        '#include <queue>', '#include <stack>', '#include <cmath>',
+        '#include <cstring>', '#include <cstdio>', '#include <cstdlib>',
+        '#include <utility>', '#include <functional>', '#include <memory>',
+        '#include <array>', '#include <deque>', '#include <list>',
+        '#include <unordered_map>', '#include <unordered_set>',
+        '#include <iterator>', '#include <numeric>', '#include <chrono>',
+        '#include <thread>', '#include <mutex>', '#include <fstream>',
+        '#include <sstream>', '#include <iomanip>'
+    ];
+
+    const cppContainerMethods = {
+        'vector': ['push_back', 'pop_back', 'size', 'empty', 'clear', 'begin', 'end', 'front', 'back', 'at', 'resize', 'reserve', 'capacity', 'data', 'insert', 'erase', 'emplace_back'],
+        'string': ['length', 'size', 'empty', 'clear', 'substr', 'find', 'replace', 'append', 'c_str', 'push_back', 'pop_back', 'insert', 'erase', 'compare', 'data'],
+        'map': ['insert', 'erase', 'find', 'size', 'empty', 'clear', 'begin', 'end', 'count', 'at', 'operator[]', 'emplace', 'lower_bound', 'upper_bound'],
+        'set': ['insert', 'erase', 'find', 'size', 'empty', 'clear', 'begin', 'end', 'count', 'emplace', 'lower_bound', 'upper_bound'],
+        'queue': ['push', 'pop', 'front', 'back', 'size', 'empty'],
+        'stack': ['push', 'pop', 'top', 'size', 'empty'],
+        'list': ['push_back', 'pop_back', 'push_front', 'pop_front', 'size', 'empty', 'clear', 'begin', 'end', 'front', 'back', 'insert', 'erase']
+    };
+
+    // Enhanced C++ completion provider
+    monacoInstance.languages.registerCompletionItemProvider('cpp', {
+        provideCompletionItems: (model, position) => {
+            const word = model.getWordUntilPosition(position);
+            const range = {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: word.startColumn,
+                endColumn: word.endColumn
+            };
+
+            const line = model.getLineContent(position.lineNumber);
+            const textUntilPosition = model.getValueInRange({
+                startLineNumber: position.lineNumber,
+                startColumn: 1,
+                endLineNumber: position.lineNumber,
+                endColumn: position.column
+            });
+
+            let suggestions = [];
+
+            // Check for include statements
+            if (textUntilPosition.includes('#include')) {
+                suggestions = cppHeaders.map(header => ({
+                    label: header,
+                    kind: monacoInstance.languages.CompletionItemKind.Module,
+                    insertText: header,
+                    range: {
+                        startLineNumber: position.lineNumber,
+                        endLineNumber: position.lineNumber,
+                        startColumn: 1,
+                        endColumn: line.length + 1
+                    },
+                    detail: 'C++ Standard Header'
+                }));
+            }
+            // Check for std:: namespace
+            else if (textUntilPosition.endsWith('std::')) {
+                suggestions = cppStdLibrary.map(func => ({
+                    label: func,
+                    kind: monacoInstance.languages.CompletionItemKind.Function,
+                    insertText: func,
+                    range: range,
+                    detail: 'Standard library function'
+                }));
+            }
+            // Enhanced container method calls with better type inference
+            else if (textUntilPosition.match(/(\w+)\.$/)) {
+                const containerMatch = textUntilPosition.match(/(\w+)\.$/);
+                if (containerMatch) {
+                    const varName = containerMatch[1];
+                    let methods = [];
+                    
+                    // Enhanced container type inference
+                    if (line.includes(`vector<`) || line.includes(`std::vector`) || line.includes(`${varName}.push_back`)) {
+                        methods = cppContainerMethods.vector;
+                    } else if (line.includes(`string`) || line.includes(`std::string`) || line.includes(`${varName} = "`)) {
+                        methods = cppContainerMethods.string;
+                    } else if (line.includes(`map<`) || line.includes(`std::map`)) {
+                        methods = cppContainerMethods.map;
+                    } else if (line.includes(`set<`) || line.includes(`std::set`)) {
+                        methods = cppContainerMethods.set;
+                    } else if (line.includes(`queue<`) || line.includes(`std::queue`)) {
+                        methods = cppContainerMethods.queue;
+                    } else if (line.includes(`stack<`) || line.includes(`std::stack`)) {
+                        methods = cppContainerMethods.stack;
+                    } else if (line.includes(`list<`) || line.includes(`std::list`)) {
+                        methods = cppContainerMethods.list;
+                    } else {
+                        // Generic methods for unknown containers
+                        methods = [...cppContainerMethods.vector, ...cppContainerMethods.string];
+                    }
+
+                    suggestions = methods.map(method => ({
+                        label: method,
+                        kind: monacoInstance.languages.CompletionItemKind.Method,
+                        insertText: method,
+                        range: range,
+                        detail: `${method}() method`
+                    }));
+                }
+            }
+            // Regular suggestions
+            else {
+                const allSuggestions = [
+                    ...cppKeywords.map(keyword => ({
+                        label: keyword,
+                        kind: monacoInstance.languages.CompletionItemKind.Keyword,
+                        insertText: keyword,
+                        range: range,
+                        detail: 'C++ keyword'
+                    })),
+                    ...cppStdLibrary.map(func => ({
+                        label: `std::${func}`,
+                        kind: monacoInstance.languages.CompletionItemKind.Function,
+                        insertText: `std::${func}`,
+                        range: range,
+                        detail: 'Standard library function'
+                    }))
+                ];
+
+                const currentWord = word.word.toLowerCase();
+                suggestions = allSuggestions.filter(suggestion => 
+                    suggestion.label.toLowerCase().includes(currentWord)
+                );
+            }
+
+            return { suggestions };
+        },
+        triggerCharacters: ['.', '::', '#']
+    });
+
+    // Java IntelliSense (keeping your existing implementation)
+    const javaKeywords = [
+        'abstract', 'assert', 'boolean', 'break', 'byte', 'case', 'catch', 'char',
+        'class', 'const', 'continue', 'default', 'do', 'double', 'else', 'enum',
+        'extends', 'final', 'finally', 'float', 'for', 'goto', 'if', 'implements',
+        'import', 'instanceof', 'int', 'interface', 'long', 'native', 'new',
+        'package', 'private', 'protected', 'public', 'return', 'short', 'static',
+        'strictfp', 'super', 'switch', 'synchronized', 'this', 'throw', 'throws',
+        'transient', 'try', 'void', 'volatile', 'while'
+    ];
+
+    const javaBuiltins = [
+        'System', 'String', 'Integer', 'Double', 'Float', 'Boolean', 'Character',
+        'Object', 'Exception', 'RuntimeException', 'ArrayList', 'HashMap',
+        'HashSet', 'LinkedList', 'StringBuilder', 'StringBuffer'
+    ];
+
+    // Java completion provider
+    monacoInstance.languages.registerCompletionItemProvider('java', {
+        provideCompletionItems: (model, position) => {
+            const word = model.getWordUntilPosition(position);
+            const range = {
+                startLineNumber: position.lineNumber,
+                endLineNumber: position.lineNumber,
+                startColumn: word.startColumn,
+                endColumn: word.endColumn
+            };
+
+            const textUntilPosition = model.getValueInRange({
+                startLineNumber: position.lineNumber,
+                startColumn: 1,
+                endLineNumber: position.lineNumber,
+                endColumn: position.column
+            });
+
+            let suggestions = [];
+
+            // Check for System.out. pattern
+            if (textUntilPosition.endsWith('System.out.')) {
+                suggestions = ['println', 'print', 'printf'].map(method => ({
+                    label: method,
+                    kind: monacoInstance.languages.CompletionItemKind.Method,
+                    insertText: method,
+                    range: range,
+                    detail: `System.out.${method}() method`
+                }));
+            }
+            // Regular suggestions
+            else {
+                const allSuggestions = [
+                    ...javaKeywords.map(keyword => ({
+                        label: keyword,
+                        kind: monacoInstance.languages.CompletionItemKind.Keyword,
+                        insertText: keyword,
+                        range: range,
+                        detail: 'Java keyword'
+                    })),
+                    ...javaBuiltins.map(builtin => ({
+                        label: builtin,
+                        kind: monacoInstance.languages.CompletionItemKind.Class,
+                        insertText: builtin,
+                        range: range,
+                        detail: 'Java class'
+                    }))
+                ];
+
+                const currentWord = word.word.toLowerCase();
+                suggestions = allSuggestions.filter(suggestion => 
+                    suggestion.label.toLowerCase().startsWith(currentWord)
+                );
+            }
+
+            return { suggestions };
+        },
+        triggerCharacters: ['.']
+    });
+};
+
+    useEffect(() => {
+        if (!authLoading && user) {
+            setCurrentUser(user);
+            
+            const socket = io("https://codelab-backend-q5m7.onrender.com");
+            socketRef.current = socket;
+            const doc = new Y.Doc();
+            setYDoc(doc);
+
+            const yMetadata = doc.getMap('metadata');
+            yMetadata.observe(event => {
+                const newLang = yMetadata.get('language');
+                if (newLang && monacoRef.current && editor && newLang !== currentLanguage) {
+                    setCurrentLanguage(newLang);
+                    monacoRef.current.editor.setModelLanguage(editor.getModel(), newLang);
+                }
+            });
+
+            socket.on('connect', () => {
+                setIsConnected(true);
+                // Send user info along with room join
+                socket.emit('join-room', { roomId, user });
+            });
+
+            socket.on('disconnect', () => {
+                setIsConnected(false);
+                setConnectedUsers([]);
+            });
+
+            socket.on('doc-sync', (docState) => Y.applyUpdate(doc, new Uint8Array(docState)));
+            socket.on('doc-update', (update) => Y.applyUpdate(doc, new Uint8Array(update)));
+
+            // Load existing room state when joining
+            socket.on('room-state-sync', ({ input, output }) => {
+                console.log('📥 Received room state:', { input, output });
+                setTimeout(() => {
+                    if (input !== undefined) setUserInput(input);
+                    if (output !== undefined) setOutput(output);
+                }, 100);
+            });
+
+            // Listen for user updates
+            socket.on('users-update', (users) => {
+                console.log('👥 Users updated:', users);
+                setConnectedUsers(users);
+            });
+
+            // Real-time sync events
+            socket.on('input-sync', (input) => {
+                setUserInput(input);
+            });
+
+            socket.on('output-sync', (output) => {
+                setOutput(output);
+            });
+
+            socket.on('execution-status', (isExecuting) => {
+                setIsExecuting(isExecuting);
+            });
+
+            doc.on('update', (update) => {
+                socket.emit('doc-update', { roomId, update });
+            });
+
+            return () => {
+                socket.disconnect();
+                doc.destroy();
+                socketRef.current = null;
+            };
+        }
+    }, [roomId, user, authLoading, editor]);
+
+    useEffect(() => {
+        if (editor && yDoc) {
+            const monacoBinding = new MonacoBinding(yDoc.getText('monaco'), editor.getModel(), new Set([editor]));
+            setBinding(monacoBinding);
+        }
+        return () => {
+            binding?.destroy();
+        };
+    }, [editor, yDoc]);
+
+    if (authLoading) {
+        return <div className="loading-screen">Authenticating & Loading Session...</div>;
     }
-  }, [editor, yDoc]);
 
-  return (
-    <div className="editor-container">
+    return (
+        <div className="editor-container">
+            
       {/* Header */}
       <header className="editor-header">
         <div className="header-left">
-          <h1 className="editor-title">CodeLab IDE</h1>
-          <div className="connection-status">
-            <div className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`}></div>
-            <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
-          </div>
+            <h1 className="editor-title">CodeLab IDE</h1>
+            <div className="connection-status">
+                <div className={`status-indicator ${isConnected ? 'connected' : 'disconnected'}`}></div>
+                <span>{isConnected ? 'Connected' : 'Disconnected'}</span>
+            </div>
         </div>
         
         <div className="header-center">
-          <div className="room-info">
-            <span className="room-label">Room:</span>
-            <code className="room-id">{roomId}</code>
-            <Button onClick={handleCopyRoomId} variant="secondary" className="copy-btn">
-              Copy ID
-            </Button>
-          </div>
+            <div className="room-info">
+                <span className="room-label">Room:</span>
+                <code className="room-id">{roomId}</code>
+                <Button onClick={handleCopyRoomId} variant="secondary" className="copy-btn">
+                    Copy ID
+                </Button>
+            </div>
         </div>
 
         <div className="header-right">
-          <div className="connected-users">
-            <span className="users-count">{connectedUsers.length} users online</span>
-            {/* Show user avatars/names */}
-            <div className="users-list">
-              {connectedUsers.slice(0, 3).map((connectedUser, index) => (
-                <div 
-                  key={connectedUser.id} 
-                  className="user-avatar"
-                  title={connectedUser.name}
-                  style={{
-                    backgroundColor: getUserAvatarColor(connectedUser.id),
-                    marginLeft: index > 0 ? '-8px' : '0'
-                  }}
-                >
-                  {connectedUser.name?.charAt(0)?.toUpperCase() || '?'}
+            {/* Connected Users Display */}
+            <div className="connected-users">
+                <div className="users-label">
+                    <span>👥 {connectedUsers.length} user{connectedUsers.length !== 1 ? 's' : ''}</span>
                 </div>
-              ))}
-              {connectedUsers.length > 3 && (
-                <div className="user-avatar more-users">
-                  +{connectedUsers.length - 3}
+                <div className="users-list">
+                    {connectedUsers.map((user) => (
+                        <div 
+                            key={user.id} 
+                            className={`user-avatar ${user.email === currentUser?.email ? 'current-user' : ''}`}
+                            title={`${user.name} (${user.email})`}
+                        >
+                            {user.avatar_url ? (
+                                <img src={user.avatar_url} alt={user.name} />
+                            ) : (
+                                <span className="user-initials">
+                                    {user.name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)}
+                                </span>
+                            )}
+                        </div>
+                    ))}
                 </div>
-              )}
             </div>
-          </div>
-          <Button onClick={handleLeaveRoom} variant="secondary">
-            Leave Room
-          </Button>
-          <Button onClick={handleSignOut} variant="secondary">
-            Sign Out
-          </Button>
+            
+            <Button onClick={handleLeaveRoom} variant="secondary">
+                Leave Room
+            </Button>
+            <Button onClick={handleSignOut} variant="secondary">
+                Sign Out
+            </Button>
         </div>
       </header>
 
-      {/* Toolbar */}
-      <div className="editor-toolbar">
-        <div className="toolbar-left">
-          <select 
-            value={currentLanguage} 
-            onChange={handleLanguageChange}
-            className="language-select"
-          >
-            <option value="javascript">JavaScript</option>
-            <option value="python">Python</option>
-            <option value="java">Java</option>
-            <option value="cpp">C++</option>
-            <option value="c">C</option>
-            <option value="html">HTML</option>
-            <option value="css">CSS</option>
-            <option value="json">JSON</option>
-          </select>
-        </div>
-        
-        <div className="toolbar-right">
-          <Button 
-            onClick={handleRunCode}
-            loading={isExecuting}
-            className="run-btn"
-            disabled={!isConnected}
-          >
-            {isExecuting ? 'Running...' : '▶️ Run Code'}
-          </Button>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="editor-main">
-        {/* Code Editor Panel */}
-        <div className="editor-panel">
-          <Editor
-            height="100%"
-            language={currentLanguage}
-            theme="vs-dark"
-            onMount={handleEditorDidMount}
-            defaultValue="// Welcome to CodeLab IDE!\n// Write your code here and click 'Run Code' to execute it.\n// You can see other users' cursors in real-time!\n\nconsole.log('Hello, CodeLab!');"
-            options={{
-              fontSize: 14,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              automaticLayout: true,
-              wordWrap: 'on',
-              lineNumbers: 'on',
-              folding: true,
-              contextmenu: true,
-            }}
-          />
-          
-          {/* Add the CursorManager component */}
-          {editor && socket && isConnected && (
-            <CursorManager
-              editor={editor}
-              socket={socket}
-              roomId={roomId}
-              currentUser={{
-                id: user?.id,
-                name: user?.user_metadata?.username || user?.email || 'Anonymous'
-              }}
-              connectedUsers={connectedUsers}
-            />
-          )}
-        </div>
-
-        {/* Output Panel */}
-        <div className="output-panel">
-          <div className="output-header">
-            <h3>📋 Output Console</h3>
-            <div className="output-controls">
-              {executionTime && (
-                <span className="execution-stats">
-                  ⏱️ {executionTime}s
-                </span>
-              )}
-              {executionMemory && (
-                <span className="execution-stats">
-                  💾 {executionMemory}KB
-                </span>
-              )}
-              <Button 
-                onClick={handleClearOutput} 
-                variant="secondary" 
-                className="clear-btn"
-              >
-                🗑️ Clear
-              </Button>
+            <div className="editor-toolbar">
+                <div className="toolbar-left">
+                    <select value={currentLanguage} onChange={handleLanguageChange} className="language-select">
+                        <option value="javascript">JavaScript</option>
+                        <option value="python">Python</option>
+                        <option value="cpp">C++</option>
+                        <option value="java">Java</option>
+                        <option value="html">HTML</option>
+                        <option value="css">CSS</option>
+                    </select>
+                </div>
+                <div className="toolbar-right">
+                    <Button onClick={handleRunCode} loading={isExecuting} className="run-btn">
+                        {isExecuting ? 'Running...' : 'Run Code'}
+                    </Button>
+                </div>
             </div>
-          </div>
-          <div className="output-content">
-            <pre className="output-text">
-              {output || '💡 Write some code and click "Run Code" to see the output here...\n\n👥 Collaborative Features:\n• See other users\' cursors in real-time\n• Watch live code changes\n• Execute code together\n\nSupported Languages:\n• JavaScript: console.log("Hello")\n• Python: print("Hello")\n• Java: System.out.println("Hello")\n• C++: cout << "Hello" << endl;\n• C: printf("Hello\\n");'}
-            </pre>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
 
-// Helper function for user avatar colors
-const getUserAvatarColor = (userId) => {
-  const colors = [
-    '#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#f0932b',
-    '#eb4d4b', '#6ab04c', '#7bed9f', '#70a1ff', '#5f27cd'
-  ];
-  
-  let hash = 0;
-  for (let i = 0; i < userId.length; i++) {
-    hash = userId.charCodeAt(i) + ((hash << 5) - hash);
-  }
-  
-  return colors[Math.abs(hash) % colors.length];
-};
+             {/* Main Content - Top/Bottom Layout */}
+             <div className="editor-main-vertical">
+                {/* Top Section: Code Editor */}
+                <div className="editor-top-section">
+                    <div className="editor-panel-full">
+                        <Editor
+                            height="100%"
+                            language={currentLanguage}
+                            theme="vs-dark"
+                            onMount={handleEditorDidMount}
+                            options={{ fontSize: 14, minimap: { enabled: false } }}
+                        />
+                        {/* NEW: Add CursorManager component */}
+                        {editor && socketRef.current && (
+                            <CursorManager 
+                                editor={editor}
+                                socket={socketRef.current}
+                                roomId={roomId}
+                                currentUser={currentUser}
+                                connectedUsers={connectedUsers}
+                            />
+                        )}
+                    </div>
+                </div>
+                
+                {/* Bottom Section: Input and Output side by side */}
+                <div className="editor-bottom-section">
+                    <div className="input-panel-bottom">
+                        <div className="input-header">
+                            <h3>Input</h3>
+                            <Button 
+                                onClick={() => handleInputChange('')} 
+                                variant="secondary" 
+                                className="clear-btn"
+                            >
+                                Clear
+                            </Button>
+                        </div>
+                        <textarea
+                            className="input-textarea"
+                            value={userInput}
+                            onChange={(e) => handleInputChange(e.target.value)}
+                            placeholder="Enter input for your program here (each line will be provided when input() is called)..."
+                        />
+                    </div>
+                    
+                    <div className="output-panel-bottom">
+                        <div className="output-header">
+                            <h3>Output</h3>
+                            <Button 
+                                onClick={() => {
+                                    setOutput('');
+                                    if (socketRef.current && roomId) {
+                                        socketRef.current.emit('output-update', { roomId, output: '' });
+                                    }
+                                }} 
+                                variant="secondary" 
+                                className="clear-btn"
+                            >
+                                Clear
+                            </Button>
+                        </div>
+                        <div className="output-content">
+                            <pre>{output || 'Run your code to see output here...'}</pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
 
 export default EditorPage;

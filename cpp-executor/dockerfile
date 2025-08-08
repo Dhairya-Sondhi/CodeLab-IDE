@@ -1,0 +1,12 @@
+# cpp-executor/Dockerfile
+FROM public.ecr.aws/lambda/python:3.10
+
+# Install C++ compiler and build tools
+RUN yum update -y && \
+    yum install -y gcc-c++ make
+
+# Copy handler to Lambda task root
+COPY handler.py ${LAMBDA_TASK_ROOT}
+
+# Set the CMD to your handler
+CMD [ "handler.handler" ]
