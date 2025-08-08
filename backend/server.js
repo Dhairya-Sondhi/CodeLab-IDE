@@ -29,7 +29,7 @@ const corsOptions = {
     origin: [
         "http://localhost:5173",           // Local development
         "http://127.0.0.1:5173",          // Alternative local
-        "https://codelab-lyart.vercel.app" // Production frontend
+        "https://code-lab-ide.vercel.app" // Production frontend
     ],
     methods: ["GET", "POST"],
     credentials: true
