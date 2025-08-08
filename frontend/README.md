@@ -1,36 +1,12 @@
-# CodeLab IDE - Collaborative Code Editor
+# React + Vite
 
-A real-time collaborative code editor built with React, Node.js, Socket.io, and Monaco Editor. Features include live code collaboration, cursor tracking, code execution, and user authentication.
+This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
-![CodeLab IDE](https://img.shields.io/badge/CodeLab-IDE-blue) ![React](https://img.shields.io/badge/React-18.3.1-blue) ![Node.js](https://img.shields.io/badge/Node.js-20.x-green) ![Socket.io](https://img.shields.io/badge/Socket.io-4.8.1-black)
+Currently, two official plugins are available:
 
-## 🚀 Features
+- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
+- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
 
-- **🔥 Real-time Collaboration**: Multiple users can edit code simultaneously
-- **👁️ Live Cursors**: See other users' cursors and selections in real-time  
-- **🎨 Monaco Editor**: Professional code editor with syntax highlighting
-- **▶️ Code Execution**: Run JavaScript, Python, Java, C++, and C code
-- **🔐 Authentication**: Secure user authentication with Supabase
-- **💾 Auto-save**: Automatic code persistence to database
-- **📱 Responsive Design**: Works on desktop, tablet, and mobile
-- **🎯 Room System**: Create or join coding rooms with unique IDs
+## Expanding the ESLint configuration
 
-## 🛠️ Tech Stack
-
-### Frontend
-- **React 18** - Modern React with hooks
-- **Monaco Editor** - VS Code's editor in the browser  
-- **Socket.io Client** - Real-time communication
-- **React Router** - Client-side routing
-- **Vite** - Fast build tool and dev server
-- **Y.js** - Conflict-free replicated data types for collaboration
-
-### Backend
-- **Node.js & Express** - Server runtime and web framework
-- **Socket.io** - WebSocket communication for real-time features
-- **Supabase** - PostgreSQL database and authentication
-- **Judge0 API** - Code execution engine
-- **Y.js** - Document synchronization
-
-## 📁 Project Structure
-
+If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.

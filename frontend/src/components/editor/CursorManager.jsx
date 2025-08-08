@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import '../../styles/cursors.css'
+import { useEffect, useState, useCallback } from 'react';
+import '../../styles/cursors.css';
 
 const CursorManager = ({ editor, socket, roomId, currentUser, connectedUsers }) => {
   const [remoteCursors, setRemoteCursors] = useState(new Map());
@@ -134,16 +134,79 @@ const CursorManager = ({ editor, socket, roomId, currentUser, connectedUsers }) 
     };
   }, [editor, socket, roomId, currentUser]);
 
+  // Memoized style injection to prevent unnecessary re-renders
+  const injectCursorStyles = useCallback((cursorsArray) => {
+    let styles = '';
+
+    cursorsArray.forEach(([userId]) => {
+      const color = getUserColor(userId);
+      const safeUserId = userId.replace(/[^a-zA-Z0-9]/g, '');
+
+      styles += `
+        .cursor-${safeUserId}::after {
+          content: '';
+          position: absolute;
+          width: 2px;
+          height: 18px;
+          background-color: ${color};
+          border-left: 2px solid ${color};
+          animation: blink-cursor 1s infinite;
+          z-index: 1000;
+          pointer-events: none;
+        }
+
+        .cursor-name.cursor-${safeUserId} {
+          background-color: ${color};
+          color: white;
+          padding: 2px 6px;
+          border-radius: 3px;
+          font-size: 10px;
+          font-weight: bold;
+          position: absolute;
+          transform: translateY(-100%);
+          white-space: nowrap;
+          z-index: 1001;
+          pointer-events: none;
+          font-family: 'Monaco', 'Menlo', monospace;
+        }
+
+        .selection-${safeUserId} {
+          background-color: ${color}33 !important;
+          border-radius: 2px;
+        }
+      `;
+    });
+
+    // Remove existing style element and add new one
+    const existingStyle = document.getElementById('cursor-styles');
+    if (existingStyle) {
+      existingStyle.remove();
+    }
+
+    if (styles) {
+      const styleElement = document.createElement('style');
+      styleElement.id = 'cursor-styles';
+      styleElement.textContent = `
+        @keyframes blink-cursor {
+          0%, 50% { opacity: 1; }
+          51%, 100% { opacity: 0.3; }
+        }
+        ${styles}
+      `;
+      document.head.appendChild(styleElement);
+    }
+  }, []);
+
   // Render cursors using Monaco decorations
   useEffect(() => {
     if (!editor || !isTracking) return;
 
-    // Use window.monaco.Range (This is the crucial fix)
-    const Range = window.monaco && window.monaco.Range
-      ? window.monaco.Range
-      : undefined;
-
-    if (!Range) return; // Monaco not loaded
+    // Enhanced Monaco Range check with better error handling
+    const Range = window.monaco?.Range;
+    if (!Range || typeof Range !== 'function') {
+      console.warn('Monaco Range constructor not available');
+      return;
+    }
 
     const decorations = [];
     const cursorsArray = Array.from(remoteCursors.entries());
@@ -154,30 +217,35 @@ const CursorManager = ({ editor, socket, roomId, currentUser, connectedUsers }) 
 
       // Defensive: get user (may be disconnected, fallback to last sent info)
       const user = (connectedUsers || []).find(u => u.id === data.user?.id) || data.user || {};
-      const color = getUserColor(userId);
 
       // Add cursor decoration if valid
       if (
         data.position &&
         typeof data.position.lineNumber === 'number' &&
-        typeof data.position.column === 'number'
+        typeof data.position.column === 'number' &&
+        data.position.lineNumber > 0 && // Additional validation
+        data.position.column > 0
       ) {
-        decorations.push({
-          range: new Range(
-            data.position.lineNumber,
-            data.position.column,
-            data.position.lineNumber,
-            data.position.column
-          ),
-          options: {
-            className: `remote-cursor cursor-${userId.replace(/[^a-zA-Z0-9]/g, '')}`,
-            stickiness: 1,
-            after: {
-              content: ` ${user?.name || user?.email || 'Anonymous'}`,
-              inlineClassName: `cursor-name cursor-${userId.replace(/[^a-zA-Z0-9]/g, '')}`
+        try {
+          decorations.push({
+            range: new Range(
+              data.position.lineNumber,
+              data.position.column,
+              data.position.lineNumber,
+              data.position.column
+            ),
+            options: {
+              className: `remote-cursor cursor-${userId.replace(/[^a-zA-Z0-9]/g, '')}`,
+              stickiness: 1,
+              after: {
+                content: ` ${user?.name || user?.email || 'Anonymous'}`,
+                inlineClassName: `cursor-name cursor-${userId.replace(/[^a-zA-Z0-9]/g, '')}`
+              }
             }
-          }
-        });
+          });
+        } catch (error) {
+          console.warn('Error creating cursor decoration:', error);
+        }
       }
 
       // Add selection decoration if valid and non-empty
@@ -187,40 +255,56 @@ const CursorManager = ({ editor, socket, roomId, currentUser, connectedUsers }) 
         typeof data.selection.startColumn === 'number' &&
         typeof data.selection.endLineNumber === 'number' &&
         typeof data.selection.endColumn === 'number' &&
+        data.selection.startLineNumber > 0 && // Additional validation
+        data.selection.startColumn > 0 &&
+        data.selection.endLineNumber > 0 &&
+        data.selection.endColumn > 0 &&
         (
           data.selection.startLineNumber !== data.selection.endLineNumber ||
           data.selection.startColumn !== data.selection.endColumn
         )
       ) {
-        decorations.push({
-          range: new Range(
-            data.selection.startLineNumber,
-            data.selection.startColumn,
-            data.selection.endLineNumber,
-            data.selection.endColumn
-          ),
-          options: {
-            className: `remote-selection selection-${userId.replace(/[^a-zA-Z0-9]/g, '')}`,
-            stickiness: 1
-          }
-        });
+        try {
+          decorations.push({
+            range: new Range(
+              data.selection.startLineNumber,
+              data.selection.startColumn,
+              data.selection.endLineNumber,
+              data.selection.endColumn
+            ),
+            options: {
+              className: `remote-selection selection-${userId.replace(/[^a-zA-Z0-9]/g, '')}`,
+              stickiness: 1
+            }
+          });
+        } catch (error) {
+          console.warn('Error creating selection decoration:', error);
+        }
       }
     });
 
-    // Apply decorations
-    const newDecorationIds = editor.deltaDecorations(decorationIds, decorations);
-    setDecorationIds(newDecorationIds);
+    // Apply decorations with error handling
+    try {
+      const newDecorationIds = editor.deltaDecorations(decorationIds, decorations);
+      setDecorationIds(newDecorationIds);
+    } catch (error) {
+      console.warn('Error applying decorations:', error);
+    }
 
     // Inject dynamic CSS for user colors
     injectCursorStyles(cursorsArray);
 
-  }, [remoteCursors, editor, connectedUsers, isTracking, decorationIds, currentUser]);
+  }, [remoteCursors, editor, connectedUsers, isTracking, decorationIds, currentUser, injectCursorStyles]);
 
   // Cleanup decorations on unmount
   useEffect(() => {
     return () => {
       if (editor && decorationIds.length > 0) {
-        editor.deltaDecorations(decorationIds, []);
+        try {
+          editor.deltaDecorations(decorationIds, []);
+        } catch (error) {
+          console.warn('Error cleaning up decorations:', error);
+        }
       }
       // Remove cursor styles
       const existingStyle = document.getElementById('cursor-styles');
@@ -228,18 +312,17 @@ const CursorManager = ({ editor, socket, roomId, currentUser, connectedUsers }) 
         existingStyle.remove();
       }
     };
-  }, []);
+  }, [editor, decorationIds]);
 
   return null; // This component doesn't render anything itself
 };
-
 
 // Helper function to generate consistent colors for users
 const getUserColor = (userId) => {
   const colors = [
     '#ff6b6b', '#4ecdc4', '#45b7d1', '#f9ca24', '#f0932b',
     '#eb4d4b', '#6ab04c', '#7bed9f', '#70a1ff', '#5f27cd',
-    '#ff9ff3', '#54a0ff', '#5f27cd', '#00d2d3', '#ff9f43'
+    '#ff9ff3', '#54a0ff', '#8e44ad', '#00d2d3', '#ff9f43' // Fixed duplicate color
   ];
 
   let hash = 0;
@@ -248,70 +331,6 @@ const getUserColor = (userId) => {
   }
 
   return colors[Math.abs(hash) % colors.length];
-};
-
-
-// Inject CSS styles for cursor colors
-const injectCursorStyles = (cursorsArray) => {
-  let styles = '';
-
-  cursorsArray.forEach(([userId]) => {
-    const color = getUserColor(userId);
-    const safeUserId = userId.replace(/[^a-zA-Z0-9]/g, '');
-
-    styles += `
-      .cursor-${safeUserId}::after {
-        content: '';
-        position: absolute;
-        width: 2px;
-        height: 18px;
-        background-color: ${color};
-        border-left: 2px solid ${color};
-        animation: blink-cursor 1s infinite;
-        z-index: 1000;
-        pointer-events: none;
-      }
-
-      .cursor-name.cursor-${safeUserId} {
-        background-color: ${color};
-        color: white;
-        padding: 2px 6px;
-        border-radius: 3px;
-        font-size: 10px;
-        font-weight: bold;
-        position: absolute;
-        transform: translateY(-100%);
-        white-space: nowrap;
-        z-index: 1001;
-        pointer-events: none;
-        font-family: 'Monaco', 'Menlo', monospace;
-      }
-
-      .selection-${safeUserId} {
-        background-color: ${color}33 !important;
-        border-radius: 2px;
-      }
-    `;
-  });
-
-  // Remove existing style element and add new one
-  const existingStyle = document.getElementById('cursor-styles');
-  if (existingStyle) {
-    existingStyle.remove();
-  }
-
-  if (styles) {
-    const styleElement = document.createElement('style');
-    styleElement.id = 'cursor-styles';
-    styleElement.textContent = `
-      @keyframes blink-cursor {
-        0%, 50% { opacity: 1; }
-        51%, 100% { opacity: 0.3; }
-      }
-      ${styles}
-    `;
-    document.head.appendChild(styleElement);
-  }
 };
 
 export default CursorManager;
