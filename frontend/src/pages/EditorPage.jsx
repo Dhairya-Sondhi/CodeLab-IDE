@@ -73,7 +73,7 @@ function EditorPage() {
         const code = editor.getValue();
         
         try {
-          const response = await fetch('https://codelab-ide.onrender.com', {
+          const response = await fetch('https://codelab-backend-1kcg.onrender.com', {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

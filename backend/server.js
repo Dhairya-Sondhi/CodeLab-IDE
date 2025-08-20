@@ -20,13 +20,14 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+console.log('✅ Connected to YOUR Supabase instance');
 // --- END SUPABASE SETUP ---
 
 const server = http.createServer(app);
 
 // --- CORS CONFIGURATION ---
 const corsOptions = {
-    origin: "code-lab-ide.vercel.app",
+    origin: "https://code-lab-ide.vercel.app",  
     methods: ["GET", "POST"],
     credentials: true
 };
