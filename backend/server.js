@@ -6,11 +6,9 @@ const cors = require('cors');
 const Y = require('yjs');
 const { createClient } = require('@supabase/supabase-js');
 
-// --- 1. INITIALIZE EXPRESS APP FIRST ---
 const app = express();
-// ---
 
-// --- SUPABASE SETUP ---
+// --- SUPABASE SETUP WITH YOUR CREDENTIALS ---
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY;
 
@@ -21,47 +19,47 @@ if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 console.log('✅ Connected to YOUR Supabase instance');
-// --- END SUPABASE SETUP ---
 
 const server = http.createServer(app);
 
-// --- CORS CONFIGURATION ---
+// --- UPDATED CORS CONFIGURATION ---
 const corsOptions = {
-    origin: "https://code-lab-ide.vercel.app",  
-    methods: ["GET", "POST"],
+    origin: [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://code-lab-ide.vercel.app"  // Your frontend URL
+    ],
+    methods: ["GET", "POST", "OPTIONS"],
     credentials: true
 };
 
 app.use(cors(corsOptions));
-
-// --- NEW: Add Express JSON parser ---
-// This is required to read the `body` of the /execute request
 app.use(express.json());
-// ---
 
 const io = new Server(server, {
     cors: corsOptions
 });
-// --- END CORS CONFIGURATION ---
 
-// In-memory storage for active room documents
+console.log('✅ Socket.io server initialized with CORS for:', corsOptions.origin);
+
+// In-memory storage
 const roomDocs = new Map();
-
-// NEW: In-memory storage for room states (input/output)
 const roomStates = new Map();
-const roomUsers = new Map(); // Track users in each room
+const roomUsers = new Map();
 
-// --- UPDATED DATABASE HELPER FUNCTIONS ---
+// --- DATABASE HELPER FUNCTIONS ---
 const loadDocFromDB = async (roomId) => {
     const { data, error } = await supabase
         .from('rooms')
-        .select('content, current_input, current_output') // Added input/output fields
+        .select('content, current_input, current_output')
         .eq('id', roomId)
         .single();
+
     if (error && error.code !== 'PGRST116') {
         console.error('Error loading doc:', error);
         return null;
     }
+
     return data ? {
         content: new Uint8Array(Buffer.from(data.content, 'base64')),
         input: data.current_input || '',
@@ -74,6 +72,7 @@ const saveDocToDB = async (roomId, ydoc) => {
     const { error } = await supabase
         .from('rooms')
         .upsert({ id: roomId, content: content }, { onConflict: 'id' });
+
     if (error) {
         console.error('Error saving doc:', error);
     } else {
@@ -81,7 +80,6 @@ const saveDocToDB = async (roomId, ydoc) => {
     }
 };
 
-// NEW: Save input/output to database
 const saveInputOutputToDB = async (roomId, input, output) => {
     const { error } = await supabase
         .from('rooms')
@@ -90,15 +88,40 @@ const saveInputOutputToDB = async (roomId, input, output) => {
             current_output: output || ''
         })
         .eq('id', roomId);
+
     if (error) {
         console.error('Error saving input/output:', error);
     } else {
         console.log(`Successfully saved input/output for room: ${roomId}`);
     }
 };
-// --- END DATABASE HELPER FUNCTIONS ---
 
-// --- UPDATED EXECUTION ENDPOINT (Multi-Language Support) ---
+// --- API ENDPOINTS ---
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'CodeLab IDE Backend is running!',
+        timestamp: new Date().toISOString(),
+        cors: corsOptions.origin,
+        supabase: 'Connected'
+    });
+});
+
+// Root endpoint
+app.get('/', (req, res) => {
+    res.json({
+        message: 'CodeLab IDE Backend API',
+        status: 'running',
+        endpoints: {
+            health: '/health',
+            execute: '/execute'
+        },
+        timestamp: new Date().toISOString()
+    });
+});
+
+// --- CODE EXECUTION ENDPOINT ---
 app.post('/execute', async (req, res) => {
     console.log("Received request for /execute");
     const { code, language, input } = req.body;
@@ -113,25 +136,23 @@ app.post('/execute', async (req, res) => {
     const lambdaEndpoint = executors[language];
 
     if (!lambdaEndpoint) {
-        return res.status(400).json({ 
-            error: `Language '${language}' is not supported. Supported languages: ${Object.keys(executors).join(', ')}` 
+        return res.status(400).json({
+            error: `Language '${language}' is not supported. Supported languages: ${Object.keys(executors).join(', ')}`
         });
     }
 
     try {
         console.log(`Executing ${language} code via ${lambdaEndpoint}`);
-        
         const response = await fetch(lambdaEndpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 code: code,
-                input: input || '' // Send input to Lambda
+                input: input || ''
             }),
         });
-        
-        console.log("Received response from Lambda.");
 
+        console.log("Received response from Lambda.");
         if (!response.ok) {
             const errorBody = await response.text();
             console.error('Lambda execution failed with status:', response.status, 'Body:', errorBody);
@@ -143,14 +164,12 @@ app.post('/execute', async (req, res) => {
 
         // Handle different response formats safely
         let finalResult;
-
         if (result.body && typeof result.body === 'string') {
             try {
                 finalResult = JSON.parse(result.body);
                 console.log("Parsed body:", finalResult);
             } catch (parseError) {
                 console.error("Error parsing result.body:", parseError);
-                console.error("result.body content:", result.body);
                 finalResult = { output: result.body };
             }
         } else if (result.body && typeof result.body === 'object') {
@@ -160,36 +179,32 @@ app.post('/execute', async (req, res) => {
         }
 
         res.json(finalResult);
-
     } catch (error) {
         console.error('CRITICAL ERROR in /execute endpoint:', error);
-        res.status(500).json({ 
+        res.status(500).json({
             error: 'Failed to execute code.',
             output: `Server error: ${error.message}`
         });
     }
 });
-// --- END EXECUTION ENDPOINT ---
 
+// --- SOCKET.IO CONNECTION HANDLING ---
 io.on('connection', (socket) => {
     console.log(`User connected: ${socket.id}`);
-
     const connectedRooms = new Set();
-    let currentUser = null; // Store user info for this socket
+    let currentUser = null;
 
-    // UPDATED: Modified to handle user info
     socket.on('join-room', async (data) => {
-        // Handle both old format (just roomId) and new format ({ roomId, user })
         const roomId = typeof data === 'string' ? data : data.roomId;
         const user = typeof data === 'object' ? data.user : null;
 
         socket.join(roomId);
         connectedRooms.add(roomId);
-        currentUser = user; // Store user info
+        currentUser = user;
 
         console.log(`User ${user ? user.email : socket.id} joined room ${roomId}`);
 
-        // Track users in room (only if user info is provided)
+        // Track users in room
         if (user) {
             if (!roomUsers.has(roomId)) {
                 roomUsers.set(roomId, new Map());
@@ -210,8 +225,6 @@ io.on('connection', (socket) => {
         if (!doc) {
             doc = new Y.Doc();
             roomDocs.set(roomId, doc);
-
-            // Initialize room state
             roomState = { input: '', output: '' };
             roomStates.set(roomId, roomState);
 
@@ -232,14 +245,12 @@ io.on('connection', (socket) => {
         const docState = Y.encodeStateAsUpdate(doc);
         socket.emit('doc-sync', docState);
 
-        // SEND CURRENT INPUT/OUTPUT STATE TO NEW USER
         console.log(`📤 Sending room state to ${socket.id}:`, { input: roomState.input, output: roomState.output });
         socket.emit('room-state-sync', {
             input: roomState.input,
             output: roomState.output
         });
 
-        // NEW: Send updated user list to all users in the room (only if user tracking is enabled)
         if (user && roomUsers.has(roomId)) {
             const currentUsers = Array.from(roomUsers.get(roomId).values());
             io.to(roomId).emit('users-update', currentUsers);
@@ -255,7 +266,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // UPDATED: Input sync with persistence
     socket.on('input-update', async ({ roomId, input }) => {
         const roomState = roomStates.get(roomId);
         if (roomState) {
@@ -265,17 +275,13 @@ io.on('connection', (socket) => {
         socket.to(roomId).emit('input-sync', input);
     });
 
-    // Cursor tracking events
     socket.on('cursor-position', ({ roomId, position, user }) => {
-        console.log('cursor-position event:', roomId, position, user);      
         if (roomId) {
             socket.to(roomId).emit('cursor-position', {
                 userId: socket.id,
                 position,
                 user
             });
-        } else {
-            console.warn('Received cursor-position with no roomId', { position, user });
         }
     });
 
@@ -286,12 +292,9 @@ io.on('connection', (socket) => {
                 selection,
                 user
             });
-        } else {
-            console.warn('Received selection-change with no roomId', { selection, user });
         }
     });
 
-    // UPDATED: Output sync with persistence
     socket.on('output-update', async ({ roomId, output }) => {
         const roomState = roomStates.get(roomId);
         if (roomState) {
@@ -308,29 +311,24 @@ io.on('connection', (socket) => {
     socket.on('disconnect', async () => {
         console.log(`User disconnected: ${socket.id}`);
 
-        // NEW: Remove user from all rooms they were in and update user lists
         for (const roomId of connectedRooms) {
             if (roomUsers.has(roomId)) {
                 roomUsers.get(roomId).delete(socket.id);
-
-                // Broadcast updated user list to remaining users
                 const remainingUsers = Array.from(roomUsers.get(roomId).values());
                 socket.to(roomId).emit('users-update', remainingUsers);
 
-                // Clean up empty room users
                 if (roomUsers.get(roomId).size === 0) {
                     roomUsers.delete(roomId);
                 }
             }
 
-            // Existing cleanup logic
             const room = io.sockets.adapter.rooms.get(roomId);
             if (!room || room.size === 0) {
                 const docToSave = roomDocs.get(roomId);
                 if (docToSave) {
                     await saveDocToDB(roomId, docToSave);
                     roomDocs.delete(roomId);
-                    roomStates.delete(roomId); // Clean up room state
+                    roomStates.delete(roomId);
                     console.log(`Room ${roomId} is now empty. Saving to DB and clearing from memory.`);
                 }
             }
@@ -339,6 +337,9 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3001;
+
 server.listen(PORT, () => {
     console.log(`Backend server listening on port ${PORT}`);
+    console.log(`✅ CodeLab IDE Backend is running!`);
+    console.log(`📡 CORS enabled for: ${corsOptions.origin.join(', ')}`);
 });
