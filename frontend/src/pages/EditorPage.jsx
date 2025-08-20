@@ -29,7 +29,7 @@ function EditorPage() {
     const [isExecuting, setIsExecuting] = useState(false);
     const [userInput, setUserInput] = useState('');
 
-    // UPDATED: Your deployed backend URL
+    // UPDATED: Your actual backend URL from Render
     const API_BASE_URL = window.location.hostname === 'localhost' 
         ? 'http://localhost:3001'
         : 'https://codelab-backend-1kcg.onrender.com';
@@ -62,7 +62,7 @@ function EditorPage() {
         }
     };
 
-    // Handle run code with sync - UPDATED API ENDPOINT
+    // Handle run code with sync
     const handleRunCode = async () => {
         if (!editor) return;
 
@@ -78,7 +78,7 @@ function EditorPage() {
         const code = editor.getValue();
 
         try {
-            // UPDATED: Use correct backend URL and endpoint
+            // UPDATED: Fixed API endpoint
             const response = await fetch(`${API_BASE_URL}/execute`, {
                 method: 'POST',
                 headers: {
@@ -471,7 +471,7 @@ function EditorPage() {
         });
     };
 
-    // UPDATED: Socket connection with your backend URL
+    // UPDATED: Socket connection with your deployed backend
     useEffect(() => {
         if (!authLoading && user) {
             setCurrentUser(user);
@@ -646,7 +646,7 @@ function EditorPage() {
                         }}
                     />
                     
-                    {/* CursorManager component */}
+                    {/* NEW: Add CursorManager component */}
                     {editor && socketRef.current && (
                         <CursorManager
                             editor={editor}
@@ -666,7 +666,7 @@ function EditorPage() {
                     {/* Input Panel */}
                     <div className="input-panel">
                         <div className="input-header">
-                            <h3>Input</h3>
+                            <h3>📝 Input</h3>
                             <Button 
                                 onClick={() => handleInputChange('')}
                                 variant="secondary"
@@ -686,7 +686,7 @@ function EditorPage() {
                     {/* Output Panel */}
                     <div className="output-panel">
                         <div className="output-header">
-                            <h3>Output</h3>
+                            <h3>📋 Output Console</h3>
                             <Button 
                                 onClick={() => {
                                     setOutput('');
@@ -697,7 +697,7 @@ function EditorPage() {
                                 variant="secondary"
                                 className="clear-btn"
                             >
-                                Clear
+                                🗑️ Clear
                             </Button>
                         </div>
                         <div className="output-content">
