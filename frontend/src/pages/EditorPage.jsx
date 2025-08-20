@@ -29,7 +29,7 @@ function EditorPage() {
     const [isExecuting, setIsExecuting] = useState(false);
     const [userInput, setUserInput] = useState('');
 
-    // UPDATED: Your actual backend URL from Render
+    // UPDATED: Your deployed backend URL
     const API_BASE_URL = window.location.hostname === 'localhost' 
         ? 'http://localhost:3001'
         : 'https://codelab-backend-1kcg.onrender.com';
@@ -54,6 +54,7 @@ function EditorPage() {
         }
     };
 
+    // Handle input changes with sync
     const handleInputChange = (value) => {
         setUserInput(value);
         if (socketRef.current && roomId) {
@@ -61,25 +62,23 @@ function EditorPage() {
         }
     };
 
-    // UPDATED: Fixed API endpoint URL
+    // Handle run code with sync - UPDATED API ENDPOINT
     const handleRunCode = async () => {
         if (!editor) return;
 
         setIsExecuting(true);
-        setOutput('🔄 Executing code...');
+        setOutput('Executing code...');
 
         // Notify other users that code is executing
         if (socketRef.current && roomId) {
             socketRef.current.emit('code-execution', { roomId, isExecuting: true });
-            socketRef.current.emit('output-update', { roomId, output: '🔄 Executing code...' });
+            socketRef.current.emit('output-update', { roomId, output: 'Executing code...' });
         }
 
         const code = editor.getValue();
 
         try {
-            console.log('🌐 Making request to:', `${API_BASE_URL}/execute`);
-            
-            // FIXED: Correct API endpoint
+            // UPDATED: Use correct backend URL and endpoint
             const response = await fetch(`${API_BASE_URL}/execute`, {
                 method: 'POST',
                 headers: {
@@ -92,41 +91,17 @@ function EditorPage() {
                 })
             });
 
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
             const result = await response.json();
-            console.log('📋 Response data:', result);
-            
-            let formattedOutput = '';
-            
-            if (result.output) {
-                formattedOutput += `📤 Output:\n${result.output}`;
-            } else if (result.error) {
-                formattedOutput += `❌ Error:\n${result.error}`;
-            } else {
-                formattedOutput += '📤 Output:\nExecution finished with no output.';
-            }
-            
-            if (result.time) {
-                formattedOutput += `\n\n⏱️ Execution Time: ${result.time}`;
-            }
-            
-            if (result.memory) {
-                formattedOutput += `\n💾 Memory Used: ${result.memory}`;
-            }
-
-            setOutput(formattedOutput);
+            const outputResult = result.output || result.error || 'Execution finished with no output.';
+            setOutput(outputResult);
 
             // Sync output to other users
             if (socketRef.current && roomId) {
-                socketRef.current.emit('output-update', { roomId, output: formattedOutput });
+                socketRef.current.emit('output-update', { roomId, output: outputResult });
             }
 
         } catch (error) {
-            console.error("❌ Network error:", error);
-            const errorMessage = `❌ Connection Error: ${error.message}\n\n💡 Backend Status: ${isConnected ? 'Connected' : 'Disconnected'}\n🔗 Backend URL: ${API_BASE_URL}`;
+            const errorMessage = `Network or server error: ${error.message}`;
             setOutput(errorMessage);
 
             // Sync error to other users
@@ -147,7 +122,7 @@ function EditorPage() {
         setEditor(editorInstance);
         monacoRef.current = monacoInstance;
 
-        // Python IntelliSense
+        // ENHANCED: Python IntelliSense (keeping your existing implementation)
         const pythonKeywords = [
             'def', 'class', 'if', 'elif', 'else', 'try', 'except', 'finally',
             'for', 'while', 'with', 'import', 'from', 'return', 'yield',
@@ -164,7 +139,13 @@ function EditorPage() {
             'all', 'any', 'bin', 'hex', 'oct', 'chr', 'ord', 'pow'
         ];
 
-        // Python completion provider
+        const pythonMethods = {
+            'str': ['upper', 'lower', 'strip', 'split', 'join', 'replace', 'find', 'startswith', 'endswith', 'isdigit', 'isalpha', 'isalnum', 'count', 'index'],
+            'list': ['append', 'extend', 'insert', 'remove', 'pop', 'index', 'count', 'sort', 'reverse', 'clear', 'copy'],
+            'dict': ['get', 'keys', 'values', 'items', 'pop', 'popitem', 'clear', 'update', 'copy', 'setdefault']
+        };
+
+        // Python completion provider with enhanced features
         monacoInstance.languages.registerCompletionItemProvider('python', {
             provideCompletionItems: (model, position) => {
                 const word = model.getWordUntilPosition(position);
@@ -175,52 +156,328 @@ function EditorPage() {
                     endColumn: word.endColumn
                 };
 
-                const allSuggestions = [
-                    ...pythonKeywords.map(keyword => ({
-                        label: keyword,
-                        kind: monacoInstance.languages.CompletionItemKind.Keyword,
-                        insertText: keyword,
-                        range: range,
-                        detail: 'Python keyword'
-                    })),
-                    ...pythonBuiltins.map(builtin => ({
-                        label: builtin,
-                        kind: monacoInstance.languages.CompletionItemKind.Function,
-                        insertText: builtin,
-                        range: range,
-                        detail: 'Built-in function'
-                    }))
-                ];
+                const line = model.getLineContent(position.lineNumber);
+                const textUntilPosition = model.getValueInRange({
+                    startLineNumber: position.lineNumber,
+                    startColumn: 1,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                });
 
-                const currentWord = word.word.toLowerCase();
-                const suggestions = allSuggestions.filter(suggestion =>
-                    suggestion.label.toLowerCase().startsWith(currentWord)
-                );
+                let suggestions = [];
+
+                // Check for method calls (e.g., "string_var.")
+                const methodMatch = textUntilPosition.match(/(\w+)\.$/);
+                if (methodMatch) {
+                    const varName = methodMatch[1];
+                    let methods = [];
+
+                    // Enhanced type inference
+                    if (line.includes(`${varName} = "`) || line.includes(`${varName} = '`) || textUntilPosition.includes('str(')) {
+                        methods = pythonMethods.str;
+                    } else if (line.includes(`${varName} = [`) || textUntilPosition.includes('list(')) {
+                        methods = pythonMethods.list;
+                    } else if (line.includes(`${varName} = {`) || textUntilPosition.includes('dict(')) {
+                        methods = pythonMethods.dict;
+                    } else {
+                        // Generic methods for unknown types
+                        methods = [...pythonMethods.str, ...pythonMethods.list, ...pythonMethods.dict];
+                    }
+
+                    suggestions = methods.map(method => ({
+                        label: method,
+                        kind: monacoInstance.languages.CompletionItemKind.Method,
+                        insertText: method,
+                        range: range,
+                        detail: `${method}() method`
+                    }));
+                }
+                // Special handling for class definitions
+                else if (textUntilPosition.trim().startsWith('def ') &&
+                    position.lineNumber > 1 &&
+                    model.getLineContent(position.lineNumber - 1).includes('class ')) {
+                    suggestions.push({
+                        label: '__init__',
+                        kind: monacoInstance.languages.CompletionItemKind.Constructor,
+                        insertText: '__init__(self):',
+                        range: range,
+                        detail: 'Constructor method'
+                    });
+                }
+                else {
+                    // Regular keyword and builtin suggestions
+                    const allSuggestions = [
+                        ...pythonKeywords.map(keyword => ({
+                            label: keyword,
+                            kind: monacoInstance.languages.CompletionItemKind.Keyword,
+                            insertText: keyword,
+                            range: range,
+                            detail: 'Python keyword'
+                        })),
+                        ...pythonBuiltins.map(builtin => ({
+                            label: builtin,
+                            kind: monacoInstance.languages.CompletionItemKind.Function,
+                            insertText: builtin,
+                            range: range,
+                            detail: 'Built-in function'
+                        }))
+                    ];
+
+                    // Filter suggestions based on what user is typing
+                    const currentWord = word.word.toLowerCase();
+                    suggestions = allSuggestions.filter(suggestion =>
+                        suggestion.label.toLowerCase().startsWith(currentWord)
+                    );
+                }
 
                 return { suggestions };
             },
             triggerCharacters: ['.']
         });
 
-        // Similar completion providers for C++, Java, etc.
-        // (keeping the same logic as your original file)
+        // ENHANCED C++ IntelliSense with additional support
+        const cppKeywords = [
+            'auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do',
+            'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if',
+            'int', 'long', 'register', 'return', 'short', 'signed', 'sizeof', 'static',
+            'struct', 'switch', 'typedef', 'union', 'unsigned', 'void', 'volatile', 'while',
+            'class', 'private', 'protected', 'public', 'friend', 'inline', 'template',
+            'virtual', 'bool', 'true', 'false', 'namespace', 'using', 'try', 'catch',
+            'throw', 'new', 'delete', 'this', 'operator', 'const_cast', 'dynamic_cast',
+            'reinterpret_cast', 'static_cast', 'nullptr', 'constexpr', 'decltype',
+            'override', 'final', 'noexcept', 'thread_local', 'alignas', 'alignof'
+        ];
+
+        const cppStdLibrary = [
+            'cout', 'cin', 'endl', 'string', 'vector', 'map', 'set', 'list',
+            'queue', 'stack', 'priority_queue', 'pair', 'make_pair',
+            'sort', 'find', 'max', 'min', 'swap', 'reverse', 'unique',
+            'lower_bound', 'upper_bound', 'binary_search', 'next_permutation',
+            'prev_permutation', 'accumulate', 'count', 'count_if', 'find_if',
+            'transform', 'copy', 'move', 'fill', 'generate', 'replace',
+            'remove', 'remove_if', 'distance', 'advance', 'back_inserter'
+        ];
+
+        const cppHeaders = [
+            '#include <iostream>', '#include <vector>', '#include <string>',
+            '#include <map>', '#include <set>', '#include <algorithm>',
+            '#include <queue>', '#include <stack>', '#include <deque>',
+            '#include <list>', '#include <utility>', '#include <functional>',
+            '#include <iterator>', '#include <numeric>', '#include <cmath>',
+            '#include <cstdio>', '#include <cstdlib>', '#include <cstring>',
+            '#include <climits>', '#include <cfloat>',
+            '#include <memory>', '#include <thread>', '#include <mutex>',
+            '#include <condition_variable>', '#include <atomic>', '#include <future>',
+            '#include <chrono>', '#include <random>'
+        ];
+
+        const cppContainerMethods = {
+            'vector': ['push_back', 'pop_back', 'size', 'empty', 'clear', 'begin', 'end', 'front', 'back', 'at', 'resize', 'reserve', 'capacity', 'data', 'insert', 'erase', 'emplace_back'],
+            'string': ['length', 'size', 'empty', 'clear', 'substr', 'find', 'replace', 'append', 'c_str', 'push_back', 'pop_back', 'insert', 'erase', 'compare', 'data'],
+            'map': ['insert', 'erase', 'find', 'size', 'empty', 'clear', 'begin', 'end', 'count', 'at', 'operator[]', 'emplace', 'lower_bound', 'upper_bound'],
+            'set': ['insert', 'erase', 'find', 'size', 'empty', 'clear', 'begin', 'end', 'count', 'emplace', 'lower_bound', 'upper_bound'],
+            'queue': ['push', 'pop', 'front', 'back', 'size', 'empty'],
+            'stack': ['push', 'pop', 'top', 'size', 'empty'],
+            'list': ['push_back', 'pop_back', 'push_front', 'pop_front', 'size', 'empty', 'clear', 'begin', 'end', 'front', 'back', 'insert', 'erase']
+        };
+
+        // Enhanced C++ completion provider
+        monacoInstance.languages.registerCompletionItemProvider('cpp', {
+            provideCompletionItems: (model, position) => {
+                const word = model.getWordUntilPosition(position);
+                const range = {
+                    startLineNumber: position.lineNumber,
+                    endLineNumber: position.lineNumber,
+                    startColumn: word.startColumn,
+                    endColumn: word.endColumn
+                };
+
+                const line = model.getLineContent(position.lineNumber);
+                const textUntilPosition = model.getValueInRange({
+                    startLineNumber: position.lineNumber,
+                    startColumn: 1,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                });
+
+                let suggestions = [];
+
+                // Check for include statements
+                if (textUntilPosition.includes('#include')) {
+                    suggestions = cppHeaders.map(header => ({
+                        label: header,
+                        kind: monacoInstance.languages.CompletionItemKind.Module,
+                        insertText: header,
+                        range: {
+                            startLineNumber: position.lineNumber,
+                            endLineNumber: position.lineNumber,
+                            startColumn: 1,
+                            endColumn: line.length + 1
+                        },
+                        detail: 'C++ Standard Header'
+                    }));
+                }
+                // Check for std:: namespace
+                else if (textUntilPosition.endsWith('std::')) {
+                    suggestions = cppStdLibrary.map(func => ({
+                        label: func,
+                        kind: monacoInstance.languages.CompletionItemKind.Function,
+                        insertText: func,
+                        range: range,
+                        detail: 'Standard library function'
+                    }));
+                }
+                // Enhanced container method calls with better type inference
+                else if (textUntilPosition.match(/(\w+)\.$/)) {
+                    const containerMatch = textUntilPosition.match(/(\w+)\.$/);
+                    if (containerMatch) {
+                        const varName = containerMatch[1];
+                        let methods = [];
+
+                        // Enhanced container type inference
+                        if (line.includes(`vector<`) || line.includes(`std::vector`) || line.includes(`${varName}.push_back`)) {
+                            methods = cppContainerMethods.vector;
+                        } else if (line.includes(`string`) || line.includes(`std::string`) || line.includes(`${varName} = "`)) {
+                            methods = cppContainerMethods.string;
+                        } else if (line.includes(`map<`) || line.includes(`std::map`)) {
+                            methods = cppContainerMethods.map;
+                        } else if (line.includes(`set<`) || line.includes(`std::set`)) {
+                            methods = cppContainerMethods.set;
+                        } else if (line.includes(`queue<`) || line.includes(`std::queue`)) {
+                            methods = cppContainerMethods.queue;
+                        } else if (line.includes(`stack<`) || line.includes(`std::stack`)) {
+                            methods = cppContainerMethods.stack;
+                        } else if (line.includes(`list<`) || line.includes(`std::list`)) {
+                            methods = cppContainerMethods.list;
+                        } else {
+                            // Generic methods for unknown containers
+                            methods = [...cppContainerMethods.vector, ...cppContainerMethods.string];
+                        }
+
+                        suggestions = methods.map(method => ({
+                            label: method,
+                            kind: monacoInstance.languages.CompletionItemKind.Method,
+                            insertText: method,
+                            range: range,
+                            detail: `${method}() method`
+                        }));
+                    }
+                }
+                // Regular suggestions
+                else {
+                    const allSuggestions = [
+                        ...cppKeywords.map(keyword => ({
+                            label: keyword,
+                            kind: monacoInstance.languages.CompletionItemKind.Keyword,
+                            insertText: keyword,
+                            range: range,
+                            detail: 'C++ keyword'
+                        })),
+                        ...cppStdLibrary.map(func => ({
+                            label: `std::${func}`,
+                            kind: monacoInstance.languages.CompletionItemKind.Function,
+                            insertText: `std::${func}`,
+                            range: range,
+                            detail: 'Standard library function'
+                        }))
+                    ];
+
+                    const currentWord = word.word.toLowerCase();
+                    suggestions = allSuggestions.filter(suggestion =>
+                        suggestion.label.toLowerCase().includes(currentWord)
+                    );
+                }
+
+                return { suggestions };
+            },
+            triggerCharacters: ['.', '::', '#']
+        });
+
+        // Java IntelliSense (keeping your existing implementation)
+        const javaKeywords = [
+            'abstract', 'assert', 'boolean', 'break', 'byte', 'case', 'catch', 'char',
+            'class', 'const', 'continue', 'default', 'do', 'double', 'else', 'enum',
+            'extends', 'final', 'finally', 'float', 'for', 'goto', 'if', 'implements',
+            'import', 'instanceof', 'int', 'interface', 'long', 'native', 'new',
+            'package', 'private', 'protected', 'public', 'return', 'short', 'static',
+            'strictfp', 'super', 'switch', 'synchronized', 'this', 'throw', 'throws',
+            'transient', 'try', 'void', 'volatile', 'while'
+        ];
+
+        const javaBuiltins = [
+            'System', 'String', 'Integer', 'Double', 'Float', 'Boolean', 'Character',
+            'Object', 'Exception', 'RuntimeException', 'ArrayList', 'HashMap',
+            'HashSet', 'LinkedList', 'StringBuilder', 'StringBuffer'
+        ];
+
+        // Java completion provider
+        monacoInstance.languages.registerCompletionItemProvider('java', {
+            provideCompletionItems: (model, position) => {
+                const word = model.getWordUntilPosition(position);
+                const range = {
+                    startLineNumber: position.lineNumber,
+                    endLineNumber: position.lineNumber,
+                    startColumn: word.startColumn,
+                    endColumn: word.endColumn
+                };
+
+                const textUntilPosition = model.getValueInRange({
+                    startLineNumber: position.lineNumber,
+                    startColumn: 1,
+                    endLineNumber: position.lineNumber,
+                    endColumn: position.column
+                });
+
+                let suggestions = [];
+
+                // Check for System.out. pattern
+                if (textUntilPosition.endsWith('System.out.')) {
+                    suggestions = ['println', 'print', 'printf'].map(method => ({
+                        label: method,
+                        kind: monacoInstance.languages.CompletionItemKind.Method,
+                        insertText: method,
+                        range: range,
+                        detail: `System.out.${method}() method`
+                    }));
+                }
+                // Regular suggestions
+                else {
+                    const allSuggestions = [
+                        ...javaKeywords.map(keyword => ({
+                            label: keyword,
+                            kind: monacoInstance.languages.CompletionItemKind.Keyword,
+                            insertText: keyword,
+                            range: range,
+                            detail: 'Java keyword'
+                        })),
+                        ...javaBuiltins.map(builtin => ({
+                            label: builtin,
+                            kind: monacoInstance.languages.CompletionItemKind.Class,
+                            insertText: builtin,
+                            range: range,
+                            detail: 'Java class'
+                        }))
+                    ];
+
+                    const currentWord = word.word.toLowerCase();
+                    suggestions = allSuggestions.filter(suggestion =>
+                        suggestion.label.toLowerCase().startsWith(currentWord)
+                    );
+                }
+
+                return { suggestions };
+            },
+            triggerCharacters: ['.']
+        });
     };
 
-    // UPDATED: Socket connection with correct backend URL
+    // UPDATED: Socket connection with your backend URL
     useEffect(() => {
         if (!authLoading && user) {
             setCurrentUser(user);
-            
-            console.log(`🔌 Connecting to backend: ${API_BASE_URL}`);
-            
-            const socket = io(API_BASE_URL, {
-                transports: ['websocket', 'polling'],
-                timeout: 20000,
-                forceNew: true,
-                withCredentials: true
-            });
-            
+            const socket = io(API_BASE_URL);
             socketRef.current = socket;
+
             const doc = new Y.Doc();
             setYDoc(doc);
 
@@ -234,18 +491,12 @@ function EditorPage() {
             });
 
             socket.on('connect', () => {
-                console.log('✅ Socket.io connected successfully!');
                 setIsConnected(true);
+                // Send user info along with room join
                 socket.emit('join-room', { roomId, user });
             });
 
-            socket.on('connect_error', (error) => {
-                console.error('❌ Socket.io connection failed:', error);
-                setIsConnected(false);
-            });
-
             socket.on('disconnect', () => {
-                console.log('🔌 Socket.io disconnected');
                 setIsConnected(false);
                 setConnectedUsers([]);
             });
@@ -292,7 +543,7 @@ function EditorPage() {
                 socketRef.current = null;
             };
         }
-    }, [roomId, user, authLoading, editor, API_BASE_URL]);
+    }, [roomId, user, authLoading, editor]);
 
     useEffect(() => {
         if (editor && yDoc) {
@@ -368,14 +619,14 @@ function EditorPage() {
                         className="run-btn"
                         disabled={!isConnected}
                     >
-                        {isExecuting ? 'Running...' : '▶️ Run Code'}
+                        {isExecuting ? 'Running...' : 'Run Code'}
                     </Button>
                 </div>
             </div>
 
-            {/* Main Content */}
+            {/* Main Content - Top/Bottom Layout */}
             <div className="editor-main">
-                {/* Code Editor Panel */}
+                {/* Top Section: Code Editor */}
                 <div className="editor-panel">
                     <Editor
                         height="100%"
@@ -415,7 +666,7 @@ function EditorPage() {
                     {/* Input Panel */}
                     <div className="input-panel">
                         <div className="input-header">
-                            <h3>📝 Input</h3>
+                            <h3>Input</h3>
                             <Button 
                                 onClick={() => handleInputChange('')}
                                 variant="secondary"
@@ -435,7 +686,7 @@ function EditorPage() {
                     {/* Output Panel */}
                     <div className="output-panel">
                         <div className="output-header">
-                            <h3>📋 Output Console</h3>
+                            <h3>Output</h3>
                             <Button 
                                 onClick={() => {
                                     setOutput('');
@@ -446,12 +697,12 @@ function EditorPage() {
                                 variant="secondary"
                                 className="clear-btn"
                             >
-                                🗑️ Clear
+                                Clear
                             </Button>
                         </div>
                         <div className="output-content">
                             <pre className="output-text">
-                                {output || '💡 Write some code and click "Run Code" to see the output here...\n\n👥 Collaborative Features:\n• See other users\' cursors in real-time\n• Watch live code changes\n• Execute code together\n\nSupported Languages:\n• JavaScript: console.log("Hello")\n• Python: print("Hello")\n• Java: System.out.println("Hello")\n• C++: cout << "Hello" << endl;\n• C: printf("Hello\\n");'}
+                                {output || 'Run your code to see output here...'}
                             </pre>
                         </div>
                     </div>
