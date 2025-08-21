@@ -111,18 +111,30 @@ function EditorPage() {
         return templates[language] || `// New ${language} file\nconsole.log("Hello World!");`;
     };
 
-    // File management functions
+    // FIXED: File selection with proper content preservation
     const handleFileSelect = (fileName) => {
-        if (fileName === activeFile) return;
+        if (fileName === activeFile || !editor) return;
+
+        // Save current file content BEFORE switching
+        const currentContent = editor.getValue();
+        setFiles(prevFiles => ({
+            ...prevFiles,
+            [activeFile]: {
+                ...prevFiles[activeFile],
+                content: currentContent
+            }
+        }));
+
+        // Switch to new file
         setActiveFile(fileName);
         setCurrentLanguage(files[fileName].language);
-        
-        // Switch editor content to the selected file
-        if (editor && files[fileName]) {
-            editor.setValue(files[fileName].content || '');
-            editor.focus();
-        }
-        
+
+        // Load new file content into editor
+        const newContent = files[fileName].content || '';
+        editor.setValue(newContent);
+        editor.focus();
+
+        // Sync with collaborators
         if (socketRef.current && roomId) {
             socketRef.current.emit('file-changed', { roomId, fileName });
         }
@@ -177,7 +189,9 @@ function EditorPage() {
         
         // Switch to first new file
         if (fileNames.length > 0) {
-            handleFileSelect(fileNames[0]);
+            setTimeout(() => {
+                handleFileSelect(fileNames[0]);
+            }, 100);
         }
         
         // Sync with collaborators
@@ -199,6 +213,18 @@ function EditorPage() {
             return;
         }
 
+        // Save current content before closing
+        if (editor && fileName === activeFile) {
+            const currentContent = editor.getValue();
+            setFiles(prevFiles => ({
+                ...prevFiles,
+                [fileName]: {
+                    ...prevFiles[fileName],
+                    content: currentContent
+                }
+            }));
+        }
+
         const newFiles = { ...files };
         delete newFiles[fileName];
         setFiles(newFiles);
@@ -206,7 +232,9 @@ function EditorPage() {
         // Switch to another file if we closed the active one
         if (fileName === activeFile) {
             const remainingFiles = Object.keys(newFiles);
-            handleFileSelect(remainingFiles[0]);
+            setTimeout(() => {
+                handleFileSelect(remainingFiles[0]);
+            }, 50);
         }
 
         if (socketRef.current && roomId) {
@@ -284,9 +312,8 @@ function EditorPage() {
     monacoRef.current = monacoInstance;
     
     // Set initial content for active file
-    if (files[activeFile] && files[activeFile].content) {
-        editorInstance.setValue(files[activeFile].content);
-    }
+    const initialContent = files[activeFile]?.content || '';
+    editorInstance.setValue(initialContent);
     
     // Python IntelliSense
     const pythonKeywords = [
@@ -623,6 +650,29 @@ function EditorPage() {
     });
 };
 
+    // FIXED: Track editor content changes and save to file state
+    useEffect(() => {
+        if (!editor) return;
+
+        const handleContentChange = () => {
+            const currentContent = editor.getValue();
+            setFiles(prevFiles => ({
+                ...prevFiles,
+                [activeFile]: {
+                    ...prevFiles[activeFile],
+                    content: currentContent
+                }
+            }));
+        };
+
+        // Listen for content changes
+        const subscription = editor.onDidChangeModelContent(handleContentChange);
+
+        return () => {
+            subscription.dispose();
+        };
+    }, [editor, activeFile]);
+
     useEffect(() => {
         if (!authLoading && user) {
             setCurrentUser(user);
@@ -693,9 +743,9 @@ function EditorPage() {
 
             socket.on('bulk-files-created', ({ files }) => {
                 console.log('Bulk files created by collaborator:', files);
-                const newFiles = { ...files };
+                const newFiles = {};
                 files.forEach(({ fileName, language, content }) => {
-                    if (!newFiles[fileName]) {
+                    if (!files[fileName]) {
                         newFiles[fileName] = { name: fileName, language, content };
                     }
                 });
@@ -720,7 +770,7 @@ function EditorPage() {
                 socketRef.current = null;
             };
         }
-    }, [roomId, user, authLoading, editor]);
+    }, [roomId, user, authLoading]);
 
     useEffect(() => {
         if (editor && yDoc) {
@@ -731,40 +781,6 @@ function EditorPage() {
             binding?.destroy();
         };
     }, [editor, yDoc]);
-
-    // Update editor content when switching files
-    useEffect(() => {
-        if (editor && files[activeFile]) {
-            const currentContent = editor.getValue();
-            const fileContent = files[activeFile].content;
-            
-            if (currentContent !== fileContent) {
-                editor.setValue(fileContent);
-            }
-        }
-    }, [activeFile, editor]);
-
-    // Track content changes and update files state
-    useEffect(() => {
-        if (editor) {
-            const handleContentChange = () => {
-                const currentContent = editor.getValue();
-                setFiles(prev => ({
-                    ...prev,
-                    [activeFile]: {
-                        ...prev[activeFile],
-                        content: currentContent
-                    }
-                }));
-            };
-
-            const model = editor.getModel();
-            if (model) {
-                const disposable = model.onDidChangeContent(handleContentChange);
-                return () => disposable.dispose();
-            }
-        }
-    }, [editor, activeFile]);
 
     if (authLoading) {
         return <div className="loading-screen">Authenticating & Loading Session...</div>;
@@ -846,12 +862,12 @@ function EditorPage() {
                 </div>
             </div>
 
-             {/* Main Content - Your existing layout with NEW file tabs */}
+             {/* Main Content - Your existing layout with file tabs */}
              <div className="editor-main-vertical">
-                {/* Top Section: Code Editor with NEW File Tabs */}
+                {/* Top Section: Code Editor with File Tabs */}
                 <div className="editor-top-section">
                     <div className="editor-panel-full">
-                        {/* NEW: File Tabs Component with Bulk Creation */}
+                        {/* File Tabs Component with Bulk Creation */}
                         <FileTabs
                             files={files}
                             activeFile={activeFile}
