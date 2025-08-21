@@ -9,6 +9,7 @@ import { MonacoBinding } from 'y-monaco';
 import { useAuth } from '../context/AuthContext';
 import Button from '../components/ui/Button';
 import CursorManager from '../components/editor/CursorManager';
+import FileTabs from '../components/editor/FileTabs';
 import '../styles/editor.css';
 
 function EditorPage() {
@@ -29,6 +30,16 @@ function EditorPage() {
     const [isExecuting, setIsExecuting] = useState(false);
     const [userInput, setUserInput] = useState('');
 
+    // Multi-file state
+    const [files, setFiles] = useState({
+        'main.js': {
+            name: 'main.js',
+            language: 'javascript',
+            content: '// Welcome to CodeLab IDE!\n// Write your code here and click \'Run Code\' to execute it.\n// You can collaborate in real-time with other users!\n\nconsole.log(\'Hello, CodeLab!\');'
+        }
+    });
+    const [activeFile, setActiveFile] = useState('main.js');
+
     const handleCopyRoomId = () => {
         navigator.clipboard.writeText(roomId);
         alert(`Room ID "${roomId}" copied to clipboard!`);
@@ -43,6 +54,16 @@ function EditorPage() {
     const handleLanguageChange = (e) => {
         const newLanguage = e.target.value;
         setCurrentLanguage(newLanguage); 
+        
+        // Update active file language
+        setFiles(prev => ({
+            ...prev,
+            [activeFile]: {
+                ...prev[activeFile],
+                language: newLanguage
+            }
+        }));
+        
         if (yDoc) {
             yDoc.getMap('metadata').set('language', newLanguage);
         }
@@ -56,7 +77,144 @@ function EditorPage() {
         }
     };
 
-    // Handle run code with sync - UPDATED: Fixed endpoint
+    // Utility functions for multi-file support
+    const getLanguageFromExtension = (fileName) => {
+        const ext = fileName.split('.').pop()?.toLowerCase();
+        const extensions = {
+            js: 'javascript',
+            jsx: 'javascript',
+            ts: 'typescript',
+            py: 'python',
+            cpp: 'cpp',
+            c: 'cpp',
+            java: 'java',
+            html: 'html',
+            css: 'css',
+            json: 'json',
+            md: 'markdown',
+            txt: 'plaintext'
+        };
+        return extensions[ext] || 'javascript';
+    };
+
+    const getDefaultContent = (language) => {
+        const templates = {
+            javascript: '// New JavaScript file\nconsole.log("Hello World!");',
+            python: '# New Python file\nprint("Hello World!")',
+            cpp: '#include <iostream>\nusing namespace std;\n\nint main() {\n    cout << "Hello World!" << endl;\n    return 0;\n}',
+            java: 'public class Main {\n    public static void main(String[] args) {\n        System.out.println("Hello World!");\n    }\n}',
+            html: '<!DOCTYPE html>\n<html>\n<head>\n    <title>New HTML File</title>\n</head>\n<body>\n    <h1>Hello World!</h1>\n</body>\n</html>',
+            css: '/* New CSS file */\nbody {\n    margin: 0;\n    padding: 20px;\n    font-family: Arial, sans-serif;\n}',
+            json: '{\n  "name": "example",\n  "version": "1.0.0"\n}',
+            markdown: '# New Markdown File\n\nHello World!'
+        };
+        return templates[language] || `// New ${language} file\nconsole.log("Hello World!");`;
+    };
+
+    // File management functions
+    const handleFileSelect = (fileName) => {
+        if (fileName === activeFile) return;
+        setActiveFile(fileName);
+        setCurrentLanguage(files[fileName].language);
+        
+        // Switch editor content to the selected file
+        if (editor && files[fileName]) {
+            editor.setValue(files[fileName].content || '');
+            editor.focus();
+        }
+        
+        if (socketRef.current && roomId) {
+            socketRef.current.emit('file-changed', { roomId, fileName });
+        }
+    };
+
+    const handleNewFile = () => {
+        const fileName = prompt('Enter filename with extension:', `file${Date.now()}.js`);
+        if (!fileName || files[fileName]) {
+            if (files[fileName]) alert('File already exists!');
+            return;
+        }
+
+        const language = getLanguageFromExtension(fileName);
+        const content = getDefaultContent(language);
+
+        setFiles(prev => ({
+            ...prev,
+            [fileName]: {
+                name: fileName,
+                language: language,
+                content: content
+            }
+        }));
+
+        // Switch to the new file
+        setTimeout(() => {
+            handleFileSelect(fileName);
+        }, 100);
+
+        if (socketRef.current && roomId) {
+            socketRef.current.emit('file-created', { roomId, fileName, language, content });
+        }
+    };
+
+    const handleBulkCreateFiles = (fileNames) => {
+        const newFiles = { ...files };
+        
+        fileNames.forEach(fileName => {
+            if (!newFiles[fileName]) {
+                const language = getLanguageFromExtension(fileName);
+                const content = getDefaultContent(language);
+                
+                newFiles[fileName] = {
+                    name: fileName,
+                    language: language,
+                    content: content
+                };
+            }
+        });
+        
+        setFiles(newFiles);
+        
+        // Switch to first new file
+        if (fileNames.length > 0) {
+            handleFileSelect(fileNames[0]);
+        }
+        
+        // Sync with collaborators
+        if (socketRef.current && roomId) {
+            socketRef.current.emit('bulk-files-created', {
+                roomId,
+                files: fileNames.map(name => ({
+                    fileName: name,
+                    language: getLanguageFromExtension(name),
+                    content: getDefaultContent(getLanguageFromExtension(name))
+                }))
+            });
+        }
+    };
+
+    const handleFileClose = (fileName) => {
+        if (Object.keys(files).length === 1) {
+            alert('Cannot close the last file!');
+            return;
+        }
+
+        const newFiles = { ...files };
+        delete newFiles[fileName];
+        setFiles(newFiles);
+
+        // Switch to another file if we closed the active one
+        if (fileName === activeFile) {
+            const remainingFiles = Object.keys(newFiles);
+            handleFileSelect(remainingFiles[0]);
+        }
+
+        if (socketRef.current && roomId) {
+            socketRef.current.emit('file-closed', { roomId, fileName });
+        }
+    };
+
+    // Handle run code with sync
     const handleRunCode = async () => {
         if (!editor) return;
         
@@ -71,8 +229,16 @@ function EditorPage() {
         
         const code = editor.getValue();
         
+        // Update current file content
+        setFiles(prev => ({
+            ...prev,
+            [activeFile]: {
+                ...prev[activeFile],
+                content: code
+            }
+        }));
+        
         try {
-          // FIXED: Added /execute endpoint
           const response = await fetch('https://codelab-backend-1kcg.onrender.com/execute', {
             method: 'POST',
             headers: {
@@ -117,7 +283,12 @@ function EditorPage() {
     setEditor(editorInstance);
     monacoRef.current = monacoInstance;
     
-    // ENHANCED: Python IntelliSense (keeping your existing implementation)
+    // Set initial content for active file
+    if (files[activeFile] && files[activeFile].content) {
+        editorInstance.setValue(files[activeFile].content);
+    }
+    
+    // Python IntelliSense
     const pythonKeywords = [
         'def', 'class', 'if', 'elif', 'else', 'try', 'except', 'finally',
         'for', 'while', 'with', 'import', 'from', 'return', 'yield',
@@ -140,7 +311,7 @@ function EditorPage() {
         'dict': ['get', 'keys', 'values', 'items', 'pop', 'popitem', 'clear', 'update', 'copy', 'setdefault']
     };
 
-    // Python completion provider with enhanced features
+    // Python completion provider
     monacoInstance.languages.registerCompletionItemProvider('python', {
         provideCompletionItems: (model, position) => {
             const word = model.getWordUntilPosition(position);
@@ -161,13 +332,11 @@ function EditorPage() {
 
             let suggestions = [];
 
-            // Check for method calls (e.g., "string_var.")
             const methodMatch = textUntilPosition.match(/(\w+)\.$/);
             if (methodMatch) {
                 const varName = methodMatch[1];
                 let methods = [];
                 
-                // Enhanced type inference
                 if (line.includes(`${varName} = "`) || line.includes(`${varName} = '`) || textUntilPosition.includes('str(')) {
                     methods = pythonMethods.str;
                 } else if (line.includes(`${varName} = [`) || textUntilPosition.includes('list(')) {
@@ -175,7 +344,6 @@ function EditorPage() {
                 } else if (line.includes(`${varName} = {`) || textUntilPosition.includes('dict(')) {
                     methods = pythonMethods.dict;
                 } else {
-                    // Generic methods for unknown types
                     methods = [...pythonMethods.str, ...pythonMethods.list, ...pythonMethods.dict];
                 }
 
@@ -187,7 +355,6 @@ function EditorPage() {
                     detail: `${method}() method`
                 }));
             } 
-            // Special handling for class definitions
             else if (textUntilPosition.trim().startsWith('def ') && 
                      position.lineNumber > 1 && 
                      model.getLineContent(position.lineNumber - 1).includes('class ')) {
@@ -200,7 +367,6 @@ function EditorPage() {
                 });
             }
             else {
-                // Regular keyword and builtin suggestions
                 const allSuggestions = [
                     ...pythonKeywords.map(keyword => ({
                         label: keyword,
@@ -218,7 +384,6 @@ function EditorPage() {
                     }))
                 ];
 
-                // Filter suggestions based on what user is typing
                 const currentWord = word.word.toLowerCase();
                 suggestions = allSuggestions.filter(suggestion => 
                     suggestion.label.toLowerCase().startsWith(currentWord)
@@ -230,7 +395,7 @@ function EditorPage() {
         triggerCharacters: ['.']
     });
 
-    // ENHANCED C++ IntelliSense with additional support
+    // C++ IntelliSense
     const cppKeywords = [
         'auto', 'break', 'case', 'char', 'const', 'continue', 'default', 'do',
         'double', 'else', 'enum', 'extern', 'float', 'for', 'goto', 'if',
@@ -276,7 +441,7 @@ function EditorPage() {
         'list': ['push_back', 'pop_back', 'push_front', 'pop_front', 'size', 'empty', 'clear', 'begin', 'end', 'front', 'back', 'insert', 'erase']
     };
 
-    // Enhanced C++ completion provider
+    // C++ completion provider
     monacoInstance.languages.registerCompletionItemProvider('cpp', {
         provideCompletionItems: (model, position) => {
             const word = model.getWordUntilPosition(position);
@@ -297,7 +462,6 @@ function EditorPage() {
 
             let suggestions = [];
 
-            // Check for include statements
             if (textUntilPosition.includes('#include')) {
                 suggestions = cppHeaders.map(header => ({
                     label: header,
@@ -312,7 +476,6 @@ function EditorPage() {
                     detail: 'C++ Standard Header'
                 }));
             }
-            // Check for std:: namespace
             else if (textUntilPosition.endsWith('std::')) {
                 suggestions = cppStdLibrary.map(func => ({
                     label: func,
@@ -322,14 +485,12 @@ function EditorPage() {
                     detail: 'Standard library function'
                 }));
             }
-            // Enhanced container method calls with better type inference
             else if (textUntilPosition.match(/(\w+)\.$/)) {
                 const containerMatch = textUntilPosition.match(/(\w+)\.$/);
                 if (containerMatch) {
                     const varName = containerMatch[1];
                     let methods = [];
                     
-                    // Enhanced container type inference
                     if (line.includes(`vector<`) || line.includes(`std::vector`) || line.includes(`${varName}.push_back`)) {
                         methods = cppContainerMethods.vector;
                     } else if (line.includes(`string`) || line.includes(`std::string`) || line.includes(`${varName} = "`)) {
@@ -345,7 +506,6 @@ function EditorPage() {
                     } else if (line.includes(`list<`) || line.includes(`std::list`)) {
                         methods = cppContainerMethods.list;
                     } else {
-                        // Generic methods for unknown containers
                         methods = [...cppContainerMethods.vector, ...cppContainerMethods.string];
                     }
 
@@ -358,7 +518,6 @@ function EditorPage() {
                     }));
                 }
             }
-            // Regular suggestions
             else {
                 const allSuggestions = [
                     ...cppKeywords.map(keyword => ({
@@ -388,7 +547,7 @@ function EditorPage() {
         triggerCharacters: ['.', '::', '#']
     });
 
-    // Java IntelliSense (keeping your existing implementation)
+    // Java IntelliSense
     const javaKeywords = [
         'abstract', 'assert', 'boolean', 'break', 'byte', 'case', 'catch', 'char',
         'class', 'const', 'continue', 'default', 'do', 'double', 'else', 'enum',
@@ -425,7 +584,6 @@ function EditorPage() {
 
             let suggestions = [];
 
-            // Check for System.out. pattern
             if (textUntilPosition.endsWith('System.out.')) {
                 suggestions = ['println', 'print', 'printf'].map(method => ({
                     label: method,
@@ -435,7 +593,6 @@ function EditorPage() {
                     detail: `System.out.${method}() method`
                 }));
             }
-            // Regular suggestions
             else {
                 const allSuggestions = [
                     ...javaKeywords.map(keyword => ({
@@ -466,7 +623,6 @@ function EditorPage() {
     });
 };
 
-    // UPDATED: Socket connection with your deployed backend
     useEffect(() => {
         if (!authLoading && user) {
             setCurrentUser(user);
@@ -487,7 +643,6 @@ function EditorPage() {
 
             socket.on('connect', () => {
                 setIsConnected(true);
-                // Send user info along with room join
                 socket.emit('join-room', { roomId, user });
             });
 
@@ -527,6 +682,34 @@ function EditorPage() {
                 setIsExecuting(isExecuting);
             });
 
+            // Multi-file socket events
+            socket.on('file-created', ({ fileName, language, content }) => {
+                console.log(`New file created: ${fileName}`);
+                setFiles(prev => ({
+                    ...prev,
+                    [fileName]: { name: fileName, language, content }
+                }));
+            });
+
+            socket.on('bulk-files-created', ({ files }) => {
+                console.log('Bulk files created by collaborator:', files);
+                const newFiles = { ...files };
+                files.forEach(({ fileName, language, content }) => {
+                    if (!newFiles[fileName]) {
+                        newFiles[fileName] = { name: fileName, language, content };
+                    }
+                });
+                setFiles(prev => ({ ...prev, ...newFiles }));
+            });
+
+            socket.on('file-changed', ({ fileName }) => {
+                console.log(`User switched to: ${fileName}`);
+            });
+
+            socket.on('file-closed', ({ fileName }) => {
+                console.log(`File closed: ${fileName}`);
+            });
+
             doc.on('update', (update) => {
                 socket.emit('doc-update', { roomId, update });
             });
@@ -549,6 +732,40 @@ function EditorPage() {
         };
     }, [editor, yDoc]);
 
+    // Update editor content when switching files
+    useEffect(() => {
+        if (editor && files[activeFile]) {
+            const currentContent = editor.getValue();
+            const fileContent = files[activeFile].content;
+            
+            if (currentContent !== fileContent) {
+                editor.setValue(fileContent);
+            }
+        }
+    }, [activeFile, editor]);
+
+    // Track content changes and update files state
+    useEffect(() => {
+        if (editor) {
+            const handleContentChange = () => {
+                const currentContent = editor.getValue();
+                setFiles(prev => ({
+                    ...prev,
+                    [activeFile]: {
+                        ...prev[activeFile],
+                        content: currentContent
+                    }
+                }));
+            };
+
+            const model = editor.getModel();
+            if (model) {
+                const disposable = model.onDidChangeContent(handleContentChange);
+                return () => disposable.dispose();
+            }
+        }
+    }, [editor, activeFile]);
+
     if (authLoading) {
         return <div className="loading-screen">Authenticating & Loading Session...</div>;
     }
@@ -556,7 +773,7 @@ function EditorPage() {
     return (
         <div className="editor-container">
             
-      {/* Header */}
+      {/* Header - Your existing header remains exactly the same */}
       <header className="editor-header">
         <div className="header-left">
             <h1 className="editor-title">CodeLab IDE</h1>
@@ -577,7 +794,7 @@ function EditorPage() {
         </div>
 
         <div className="header-right">
-            {/* Connected Users Display */}
+            {/* Connected Users Display - Your existing user display */}
             <div className="connected-users">
                 <div className="users-label">
                     <span>👥 {connectedUsers.length} user{connectedUsers.length !== 1 ? 's' : ''}</span>
@@ -610,6 +827,7 @@ function EditorPage() {
         </div>
       </header>
 
+            {/* Toolbar - Your existing toolbar remains exactly the same */}
             <div className="editor-toolbar">
                 <div className="toolbar-left">
                     <select value={currentLanguage} onChange={handleLanguageChange} className="language-select">
@@ -628,19 +846,31 @@ function EditorPage() {
                 </div>
             </div>
 
-             {/* Main Content - Top/Bottom Layout */}
+             {/* Main Content - Your existing layout with NEW file tabs */}
              <div className="editor-main-vertical">
-                {/* Top Section: Code Editor */}
+                {/* Top Section: Code Editor with NEW File Tabs */}
                 <div className="editor-top-section">
                     <div className="editor-panel-full">
+                        {/* NEW: File Tabs Component with Bulk Creation */}
+                        <FileTabs
+                            files={files}
+                            activeFile={activeFile}
+                            onFileSelect={handleFileSelect}
+                            onFileClose={handleFileClose}
+                            onNewFile={handleNewFile}
+                            onBulkCreateFiles={handleBulkCreateFiles}
+                        />
+                        
+                        {/* Your existing Editor component */}
                         <Editor
-                            height="100%"
+                            height="calc(100% - 32px)" // Adjust height for tabs
                             language={currentLanguage}
                             theme="vs-dark"
                             onMount={handleEditorDidMount}
                             options={{ fontSize: 14, minimap: { enabled: false } }}
                         />
-                        {/* NEW: Add CursorManager component */}
+                        
+                        {/* Your existing CursorManager component */}
                         {editor && socketRef.current && (
                             <CursorManager 
                                 editor={editor}
@@ -653,7 +883,7 @@ function EditorPage() {
                     </div>
                 </div>
                 
-                {/* Bottom Section: Input and Output side by side */}
+                {/* Bottom Section: Input and Output - Your existing layout unchanged */}
                 <div className="editor-bottom-section">
                     <div className="input-panel-bottom">
                         <div className="input-header">

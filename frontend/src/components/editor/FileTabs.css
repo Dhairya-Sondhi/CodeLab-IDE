@@ -1,0 +1,203 @@
+/* src/components/editor/FileTabs.css */
+.file-tabs-container {
+  display: flex;
+  align-items: center;
+  background: #2d2d2d;
+  border-bottom: 1px solid #3e3e3e;
+  min-height: 32px;
+  padding: 0 8px;
+}
+
+.file-tabs-list {
+  display: flex;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.file-tabs-list::-webkit-scrollbar {
+  display: none;
+}
+
+.file-tab {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  background: #3c3c3c;
+  border: 1px solid #2d2d2d;
+  border-bottom: none;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  user-select: none;
+  white-space: nowrap;
+  margin-right: 2px;
+  border-radius: 4px 4px 0 0;
+}
+
+.file-tab:hover {
+  background: #4a4a4a;
+}
+
+.file-tab.active {
+  background: #1e1e1e;
+  border-bottom: 2px solid #16a34a;
+  border-color: #3e3e3e;
+}
+
+.file-tab-name {
+  color: #fff;
+  font-size: 12px;
+  margin-right: 8px;
+}
+
+.file-tab-close {
+  background: none;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  border-radius: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.file-tab-close:hover {
+  background: #666;
+  color: #fff;
+}
+
+.file-creation-buttons {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+
+.new-file-button, .bulk-create-button {
+  background: #4a4a4a;
+  border: none;
+  color: #fff;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 11px;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.new-file-button:hover {
+  background: #16a34a;
+}
+
+.bulk-create-button:hover {
+  background: #0066cc;
+}
+
+.bulk-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.bulk-dialog {
+  background: #2d2d2d;
+  border: 1px solid #3e3e3e;
+  border-radius: 8px;
+  padding: 20px;
+  width: 400px;
+  color: #fff;
+}
+
+.bulk-dialog h3 {
+  margin: 0 0 10px 0;
+  color: #fff;
+}
+
+.bulk-dialog p {
+  margin: 0 0 10px 0;
+  color: #ccc;
+  font-size: 14px;
+}
+
+.bulk-textarea {
+  width: 100%;
+  height: 120px;
+  background: #1e1e1e;
+  border: 1px solid #3e3e3e;
+  color: #fff;
+  padding: 8px;
+  border-radius: 4px;
+  font-family: 'Courier New', monospace;
+  resize: vertical;
+  font-size: 13px;
+}
+
+.bulk-dialog-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 15px;
+  justify-content: flex-end;
+}
+
+.create-button {
+  background: #16a34a;
+  border: none;
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s ease;
+}
+
+.create-button:hover {
+  background: #059669;
+}
+
+.cancel-button {
+  background: #666;
+  border: none;
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.2s ease;
+}
+
+.cancel-button:hover {
+  background: #888;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+  .file-tab {
+    padding: 4px 8px;
+  }
+  
+  .file-tab-name {
+    font-size: 11px;
+    margin-right: 4px;
+  }
+  
+  .new-file-button, .bulk-create-button {
+    padding: 3px 6px;
+    font-size: 10px;
+  }
+  
+  .bulk-dialog {
+    width: 320px;
+    margin: 20px;
+  }
+}
